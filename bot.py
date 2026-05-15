@@ -57,7 +57,28 @@ YTDL_OPTIONS = {
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
     'extract_flat': False,
+    # ใช้ player client หลายตัวเพื่อหลบ bot detection ของ YouTube
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['android', 'web', 'ios', 'mweb', 'tv'],
+            'player_skip': ['configs'],
+        }
+    },
+    # ปลอม User-Agent ให้ดูเหมือน browser จริง
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+    },
+    'retries': 3,
+    'fragment_retries': 3,
+    'skip_unavailable_fragments': True,
 }
+
+# ถ้ามีไฟล์ cookies.txt ให้ใช้ (ช่วยแก้ปัญหา "Sign in to confirm you're not a bot")
+COOKIES_FILE = os.getenv('COOKIES_FILE', 'cookies.txt')
+if os.path.exists(COOKIES_FILE):
+    YTDL_OPTIONS['cookiefile'] = COOKIES_FILE
+    print(f'🍪 ใช้ cookies จากไฟล์: {COOKIES_FILE}')
 
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
@@ -82,18 +103,30 @@ async def search_song(query):
             None,
             lambda: ytdl.extract_info(query, download=False)
         )
+        if data is None:
+            print("Error: ytdl.extract_info returned None")
+            return None
         # ถ้าเป็นผลค้นหา จะมี entries
         if 'entries' in data:
-            data = data['entries'][0]
+            entries = data['entries']
+            if not entries:
+                print("Error: No entries found in search results")
+                return None
+            data = entries[0]
         return {
             'url': data['url'],
-            'title': data['title'],
+            'title': data.get('title', 'Unknown'),
             'duration': data.get('duration', 0),
             'webpage_url': data.get('webpage_url', ''),
             'thumbnail': data.get('thumbnail', '')
         }
     except Exception as e:
-        print(f"Error searching song: {e}")
+        # print error เต็มๆ เพื่อ debug
+        import traceback
+        print(f"❌ Error searching song: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        # เก็บ error message ไว้ใน attribute เพื่อให้ caller ใช้ได้
+        search_song.last_error = str(e)
         return None
 
 
@@ -179,7 +212,13 @@ async def play(ctx, *, query: str = None):
         song = await search_song(query)
 
         if song is None:
-            await ctx.send("❌ ไม่พบเพลงที่ค้นหา")
+            err_msg = getattr(search_song, 'last_error', None)
+            if err_msg:
+                # ตัด error ให้สั้นพอที่จะส่งใน Discord
+                err_short = err_msg[:500]
+                await ctx.send(f"❌ ไม่พบเพลงที่ค้นหา\n```{err_short}```")
+            else:
+                await ctx.send("❌ ไม่พบเพลงที่ค้นหา")
             return
 
         queue = get_queue(ctx.guild.id)

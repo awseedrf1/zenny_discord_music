@@ -11,6 +11,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# บังคับใช้ yt-dlp ล่าสุดเสมอ (สำคัญมาก! YouTube เปลี่ยน API บ่อย)
+RUN pip install --no-cache-dir --upgrade --force-reinstall yt-dlp
+
 # Copy code
 COPY . .
 

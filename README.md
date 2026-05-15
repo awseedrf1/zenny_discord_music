@@ -140,3 +140,25 @@ python bot.py
 
 **Error: ffmpeg not found**
 - ใช้ Docker (มี FFmpeg อยู่แล้ว) ไม่ใช่ Native Python runtime
+
+**❌ ไม่พบเพลงที่ค้นหา / Sign in to confirm you're not a bot**
+
+YouTube บล็อก IP ของ cloud providers (Render, Heroku, Railway, etc.) วิธีแก้:
+
+### วิธีที่ 1: รอแล้วลองใหม่
+- บางครั้ง YouTube ปล่อย IP ชั่วคราว ลอง redeploy บน Render ใหม่ (อาจได้ IP ใหม่)
+
+### วิธีที่ 2: ใช้ Cookies (แนะนำ - ได้ผลถาวร)
+
+1. ติดตั้ง browser extension: **"Get cookies.txt LOCALLY"** (มีทั้ง Chrome, Firefox, Edge)
+2. เปิด YouTube ในโหมด **Incognito/Private** แล้ว login ด้วยบัญชี Google ที่**ไม่สำคัญ** (เผื่อโดน ban)
+3. คลิก extension → **Export** → ได้ไฟล์ `cookies.txt`
+4. **อย่าออกจาก Incognito จนกว่าจะใช้บอทเสร็จ** (ไม่งั้น cookies จะหมดอายุ)
+5. ใน repo เพิ่มไฟล์ `cookies.txt` ที่ root (ระดับเดียวกับ `bot.py`)
+6. แก้ `.gitignore` ลบบรรทัด `cookies.txt` ออก (ถ้ามี) หรือทำให้ private repo
+7. Push ขึ้น GitHub แล้ว Render จะ auto-deploy ใหม่
+
+> ⚠️ **คำเตือน**: cookies.txt มีข้อมูล login ของคุณ ห้ามใส่ใน public repo เด็ดขาด ทำเป็น **private repo** หรือใช้บัญชี Google สำรอง
+
+### วิธีที่ 3: ใช้ Proxy
+ตั้ง env variable `HTTP_PROXY` บน Render ชี้ไปยัง proxy server ที่ไม่โดน YouTube บล็อก (ต้องหา proxy เอง)
