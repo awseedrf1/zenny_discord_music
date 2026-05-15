@@ -14,7 +14,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 # อ่าน Channel ID ที่อนุญาตให้ใช้คำสั่ง (รองรับหลาย channel คั่นด้วย ,)
 ALLOWED_CHANNEL_IDS = set()
