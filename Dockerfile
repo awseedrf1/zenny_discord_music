@@ -2,7 +2,7 @@ FROM python:3.10-slim
 
 # Install FFmpeg, build tools for PyNaCl, and other dependencies
 RUN apt-get update && \
-    apt-get install -y ffmpeg build-essential python3-dev libffi-dev && \
+    apt-get install -y ffmpeg build-essential python3-dev libffi-dev libopus0 libopus-dev && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

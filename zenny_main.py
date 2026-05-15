@@ -15,6 +15,14 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('zenny_bot')
 
+# Check for Voice Support
+try:
+    import nacl
+    HAS_VOICE = True
+except ImportError:
+    HAS_VOICE = False
+    logger.warning("PyNaCl is not installed. Voice support will not work!")
+
 def parse_allowed_channel_ids(value):
     if not value:
         return []
