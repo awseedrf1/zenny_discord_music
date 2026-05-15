@@ -38,13 +38,13 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # Music Queue System
 song_queue = deque()
 
-# yt-dlp options for high performance and reliability
+# yt-dlp options with "Voucher-style" custom identity bypass
 ytdl_format_options = {
     'format': 'bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
     'restrictfilenames': True,
     'noplaylist': True,
-    'nocheckcertificate': True,
+    'nocheckcertificate': True,  # Bypass SSL verification (like the PHP script)
     'ignoreerrors': False,
     'logtostderr': False,
     'quiet': True,
@@ -52,20 +52,23 @@ ytdl_format_options = {
     'default_search': 'auto',
     'source_address': '0.0.0.0',
     'extract_flat': 'in_playlist',
-    # Use mobile clients to bypass "Sign in to confirm you're not a bot"
+    # Use high-trust clients
     'extractor_args': {
         'youtube': {
-            'player_client': ['ios', 'android', 'web'],
+            'player_client': ['tvhtml5', 'android'],
             'skip': ['dash', 'hls']
         }
     },
-    'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+    # Unique/Custom User-Agent to hide from simple bot-detectors
+    'user_agent': 'Super-Idol-Music-Bot/1.0 (Zenny-Bot; YouTube-Bypass-Active)',
+    'http_headers': {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Upgrade-Insecure-Requests': '1',
+    }
 }
-
-# Add cookies if the file exists (Optional fallback)
-if os.path.exists('cookies.txt'):
-    ytdl_format_options['cookiefile'] = 'cookies.txt'
-    logger.info("Using cookies.txt as a fallback.")
 
 ffmpeg_options = {
     'options': '-vn',
