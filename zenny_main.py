@@ -5,7 +5,7 @@ import yt_dlp
 import asyncio
 import os
 
-from zenny_server import server_on  # นำเข้า Flask app จากไฟล์ zenny_server.py
+from zenny_server import keep_alive  # นำเข้า Flask app จากไฟล์ zenny_server.py
 
 # ==========================================
 # ใส่ ID ของ Channel ที่ต้องการให้บอททำงาน (ใส่ได้หลาย ID คั่นด้วยคอมม่า)
@@ -130,10 +130,5 @@ async def stop(ctx):
         await ctx.send("👋 ออกจากห้องเรียบร้อยครับ ขอบคุณที่ใช้บริการ zenny-music!")
 
 if __name__ == "__main__":
-    if TOKEN == 'YOUR_DISCORD_BOT_TOKEN_HERE':
-        print("!!! กรุณาใส่ Token ในไฟล์ zenny-music.py ก่อนรันครับ !!!")
-    else:
-        bot.run(TOKEN)
-
-server_on()  # เรียกใช้ฟังก์ชันเพื่อเริ่ม Flask server (ถ้าต้องการ)
-bot.run(os.getenv('TOKEN'))  # ใช้ Token จาก environment variable หรือจากตัวแปร TOKEN ในโค้ด
+    keep_alive()  # เรียกใช้ฟังก์ชันเพื่อเริ่ม Flask server
+    bot.run(os.getenv('TOKEN'))  # ใช้ Token จาก environment variable
