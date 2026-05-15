@@ -8,12 +8,25 @@ import os
 from zenny_server import keep_alive  # นำเข้า Flask app จากไฟล์ zenny_server.py
 
 # ==========================================
-# ใส่ ID ของ Channel ที่ต้องการให้บอททำงาน (ใส่ได้หลาย ID คั่นด้วยคอมม่า)
+# ใส่ ID ของ Channel ที่ต้องการให้บอททำงาน
+# ถ้าอยากให้บอททำงานได้ทุก Channel ให้เว้น ALLOWED_CHANNEL_IDS ว่างไว้
 # วิธีเอา ID: เปิด Discord Settings > Advanced > เปิด Developer Mode
 # แล้วคลิกขวาที่ชื่อ Channel เลือก "Copy Channel ID"
 # ==========================================
-# ถ้าอยากให้บอททำงานได้ทุก Channel ให้เว้นว่างไว้เป็น []
-ALLOWED_CHANNEL_IDS = []  # หรือใส่ [1504841441753694461, 123456789012345678]
+
+def parse_allowed_channel_ids(value):
+    ids = []
+    for item in value.split(','):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            ids.append(int(item))
+        except ValueError:
+            continue
+    return ids
+
+ALLOWED_CHANNEL_IDS = parse_allowed_channel_ids(os.getenv('ALLOWED_CHANNEL_IDS', ''))
 
 # ตั้งค่า Intents
 intents = discord.Intents.default()
