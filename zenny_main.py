@@ -12,7 +12,8 @@ from zenny_server import keep_alive  # นำเข้า Flask app จากไ
 # วิธีเอา ID: เปิด Discord Settings > Advanced > เปิด Developer Mode
 # แล้วคลิกขวาที่ชื่อ Channel เลือก "Copy Channel ID"
 # ==========================================
-ALLOWED_CHANNEL_IDS = [123456789012345678] # แทนที่ด้วย ID จริงของคุณ (เช่น [1504841441753694461])
+# ถ้าอยากให้บอททำงานได้ทุก Channel ให้เว้นว่างไว้เป็น []
+ALLOWED_CHANNEL_IDS = []  # หรือใส่ [1504841441753694461, 123456789012345678]
 
 # ตั้งค่า Intents
 intents = discord.Intents.default()
@@ -74,6 +75,17 @@ async def on_ready():
     print('------')
     print('Bot is ready to play music! Use !play <song name/url>')
 
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        if ALLOWED_CHANNEL_IDS:
+            await ctx.send("❌ คำสั่งนี้ใช้ได้เฉพาะใน Channel ที่กำหนดเท่านั้นครับ")
+        return
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❌ โปรดระบุชื่อเพลงหรือ URL ด้วย เช่น `!play <song name/url>`")
+        return
+    raise error
+
 @bot.command()
 async def join(ctx):
     """ให้ Bot เข้ามาใน Voice Channel ที่คุณอยู่"""
@@ -131,4 +143,7 @@ async def stop(ctx):
 
 if __name__ == "__main__":
     keep_alive()  # เรียกใช้ฟังก์ชันเพื่อเริ่ม Flask server
-    bot.run(os.getenv('TOKEN'))  # ใช้ Token จาก environment variable
+    token = os.getenv('TOKEN')
+    if not token:
+        raise RuntimeError('TOKEN environment variable is not set. โปรดตั้งค่า TOKEN ให้เรียบร้อยก่อนรันบอท')
+    bot.run(token)
