@@ -94,22 +94,67 @@ async def play_next(ctx):
                 ctx.voice_client.play(player, after=lambda e: bot.loop.create_task(play_next(ctx)))
                 await ctx.send(f'🎵 กำลังเล่น: **{player.title}**')
             except Exception as e:
-                await ctx.send(f"❌ เกิดข้อผิดพลาด: {e}")
+                logger.error(f"Error in play_next: {e}")
+                await ctx.send(f"❌ เกิดข้อผิดพลาดในการเล่นเพลง: {e}")
                 bot.loop.create_task(play_next(ctx))
     else:
-        # Optional: auto disconnect after some time
-        pass
+        logger.info("Queue is empty.")
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ คุณไม่มีสิทธิ์ใช้คำสั่งใน Channel นี้ครับ")
+        return
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"❌ โปรดระบุข้อมูลให้ครบถ้วน: {error.param.name}")
+        return
+    
+    logger.error(f"Command Error: {error}")
+    await ctx.send(f"❌ เกิดข้อผิดพลาด: {error}")
+
+@bot.command()
+async def join(ctx):
+    """ให้ Bot เข้ามาใน Voice Channel"""
+    if not ctx.author.voice:
+        await ctx.send("❌ คุณต้องเข้าไปใน Voice Channel ก่อนครับ!")
+        return
+    
+    channel = ctx.author.voice.channel
+    if ctx.voice_client:
+        await ctx.voice_client.move_to(channel)
+    else:
+        await channel.connect()
+    await ctx.send(f"✅ เข้าห้อง **{channel.name}** เรียบร้อย!")
 
 @bot.command()
 async def play(ctx, *, url):
     """เล่นเพลงจาก URL หรือชื่อเพลง"""
-    if not ctx.message.author.voice:
-        return await ctx.send("คุณต้องเข้าไปใน Voice Channel ก่อนครับ!")
+    if not ctx.author.voice:
+        return await ctx.send("❌ คุณต้องเข้าไปใน Voice Channel ก่อนครับ!")
+
+    channel = ctx.author.voice.channel
+    
+    # Permission checks
+    permissions = channel.permissions_for(ctx.me)
+    if not permissions.connect or not permissions.speak:
+        return await ctx.send("❌ บอทไม่มีสิทธิ์ Connect หรือ Speak ใน Channel นี้ครับ!")
 
     if not ctx.voice_client:
-        await ctx.message.author.voice.channel.connect()
+        try:
+            await channel.connect()
+        except Exception as e:
+            logger.error(f"Failed to connect: {e}")
+            return await ctx.send(f"❌ ไม่สามารถเข้า Voice Channel ได้: {e}")
+    elif ctx.voice_client.channel != channel:
+        await ctx.voice_client.move_to(channel)
 
-    if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
+    # If it was paused, resume first (optional logic)
+    if ctx.voice_client.is_paused():
+        ctx.voice_client.resume()
+
+    if ctx.voice_client.is_playing():
         song_queue.append(url)
         await ctx.send(f"➕ เพิ่มเพลงเข้าคิวแล้ว (ลำดับที่ {len(song_queue)})")
     else:
