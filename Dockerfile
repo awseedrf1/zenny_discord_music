@@ -1,22 +1,21 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
-# Install FFmpeg, build tools for PyNaCl, and other dependencies
+# ติดตั้ง FFmpeg (จำเป็นสำหรับเล่นเพลง)
 RUN apt-get update && \
-    apt-get install -y ffmpeg build-essential python3-dev libffi-dev libopus0 libopus-dev && \
-    apt-get clean && \
+    apt-get install -y --no-install-recommends ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy requirements and install
+# ติดตั้ง dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the code
+# Copy code
 COPY . .
 
-# Expose the port Flask runs on
+# เปิด port สำหรับ keep_alive
 EXPOSE 8080
 
-# Run the bot
-CMD ["python", "zenny_main.py"]
+# รันบอท
+CMD ["python", "bot.py"]
