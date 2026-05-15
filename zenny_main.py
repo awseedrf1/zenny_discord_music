@@ -51,8 +51,21 @@ ytdl_format_options = {
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
-    'extract_flat': 'in_playlist',  # Faster extraction
+    'extract_flat': 'in_playlist',
+    # Use mobile clients to bypass "Sign in to confirm you're not a bot"
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['ios', 'android', 'web'],
+            'skip': ['dash', 'hls']
+        }
+    },
+    'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
 }
+
+# Add cookies if the file exists (Optional fallback)
+if os.path.exists('cookies.txt'):
+    ytdl_format_options['cookiefile'] = 'cookies.txt'
+    logger.info("Using cookies.txt as a fallback.")
 
 ffmpeg_options = {
     'options': '-vn',
