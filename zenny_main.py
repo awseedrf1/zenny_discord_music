@@ -1,36 +1,33 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import yt_dlp
 import asyncio
 import os
-from zenny_server import keep_alive
 
-# ดึงข้อมูลจาก Environment Variable (Secrets ใน Replit)
-TOKEN = os.environ.get('TOKEN')
+from zenny_server import server_on  # นำเข้า Flask app จากไฟล์ zenny_server.py
 
-# ดึง ID ของ Channel จาก Environment Variable (เช่น "123456789,987654321")
-raw_channels = os.environ.get('ALLOWED_CHANNEL_IDS', '')
-if raw_channels:
-    try:
-        # แปลงข้อความ "123,456" เป็น List ของตัวเลข [123, 456]
-        ALLOWED_CHANNEL_IDS = [int(id.strip()) for id in raw_channels.split(',') if id.strip()]
-    except ValueError:
-        print("!!! ข้อผิดพลาด: ALLOWED_CHANNEL_IDS ใน Secrets รูปแบบไม่ถูกต้อง (ต้องเป็นตัวเลขคั่นด้วยคอมม่า) !!!")
-        ALLOWED_CHANNEL_IDS = []
-else:
-    ALLOWED_CHANNEL_IDS = []
+# ==========================================
+# ใส่ ID ของ Channel ที่ต้องการให้บอททำงาน (ใส่ได้หลาย ID คั่นด้วยคอมม่า)
+# วิธีเอา ID: เปิด Discord Settings > Advanced > เปิด Developer Mode
+# แล้วคลิกขวาที่ชื่อ Channel เลือก "Copy Channel ID"
+# ==========================================
+ALLOWED_CHANNEL_IDS = [123456789012345678] # แทนที่ด้วย ID จริงของคุณ (เช่น [1504841441753694461])
 
 # ตั้งค่า Intents
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+# ฟังก์ชันตรวจสอบ Channel (Global Check)
 @bot.check
 async def is_in_allowed_channel(ctx):
     if not ALLOWED_CHANNEL_IDS or ctx.channel.id in ALLOWED_CHANNEL_IDS:
         return True
+    # ถ้าพิมพ์ผิด Channel บอทจะไม่ตอบโต้ (หรือจะให้ส่งข้อความเตือนก็ได้)
     return False
 
+# ตั้งค่า yt-dlp สำหรับการสตรีมเสียง
 ytdl_format_options = {
     'format': 'bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
@@ -63,21 +60,27 @@ class YTDLSource(discord.PCMVolumeTransformer):
     async def from_url(cls, url, *, loop=None, stream=True):
         loop = loop or asyncio.get_event_loop()
         data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+
         if 'entries' in data:
+            # ใช้ผลลัพธ์แรกจากการค้นหา
             data = data['entries'][0]
+
         filename = data['url'] if stream else ytdl.prepare_filename(data)
         return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user}')
-    print('Bot is ready on Replit!')
+    print(f'Logged in as {bot.user} (ID: {bot.user.id})')
+    print('------')
+    print('Bot is ready to play music! Use !play <song name/url>')
 
 @bot.command()
 async def join(ctx):
+    """ให้ Bot เข้ามาใน Voice Channel ที่คุณอยู่"""
     if not ctx.message.author.voice:
-        await ctx.send("คุณต้องเข้าห้องเสียงก่อน!")
+        await ctx.send("คุณต้องเข้าไปใน Voice Channel ก่อนครับ!")
         return
+    
     channel = ctx.message.author.voice.channel
     if ctx.voice_client:
         await ctx.voice_client.move_to(channel)
@@ -86,8 +89,10 @@ async def join(ctx):
 
 @bot.command()
 async def play(ctx, *, url):
+    """เล่นเพลงจาก URL หรือชื่อเพลง (เช่น !play รักติดไซเรน)"""
     if not ctx.voice_client:
         await ctx.invoke(join)
+
     async with ctx.typing():
         try:
             player = await YTDLSource.from_url(url, loop=bot.loop, stream=True)
@@ -97,16 +102,38 @@ async def play(ctx, *, url):
             await ctx.send(f"❌ เกิดข้อผิดพลาด: {e}")
 
 @bot.command()
+async def pause(ctx):
+    """หยุดเพลงชั่วคราว"""
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        ctx.voice_client.pause()
+        await ctx.send("⏸️ หยุดเพลงชั่วคราวแล้วครับ")
+
+@bot.command()
+async def resume(ctx):
+    """เล่นเพลงต่อ"""
+    if ctx.voice_client and ctx.voice_client.is_paused():
+        ctx.voice_client.resume()
+        await ctx.send("▶️ เล่นเพลงต่อแล้วครับ")
+
+@bot.command()
+async def skip(ctx):
+    """ข้ามเพลงที่กำลังเล่นอยู่"""
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        ctx.voice_client.stop()
+        await ctx.send("⏭️ ข้ามเพลงเรียบร้อยครับ")
+
+@bot.command()
 async def stop(ctx):
+    """หยุดเล่นและเตะ Bot ออกจากห้อง"""
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
-        await ctx.send("👋 บายครับ!")
-
-# รันระบบ Keep Alive เพื่อไม่ให้ Replit หลับ
-keep_alive()
+        await ctx.send("👋 ออกจากห้องเรียบร้อยครับ ขอบคุณที่ใช้บริการ zenny-music!")
 
 if __name__ == "__main__":
-    if TOKEN:
-        bot.run(TOKEN)
+    if TOKEN == 'YOUR_DISCORD_BOT_TOKEN_HERE':
+        print("!!! กรุณาใส่ Token ในไฟล์ zenny-music.py ก่อนรันครับ !!!")
     else:
-        print("!!! ไม่พบ TOKEN ใน Secrets (Environment Variables) !!!")
+        bot.run(TOKEN)
+
+server_on()  # เรียกใช้ฟังก์ชันเพื่อเริ่ม Flask server (ถ้าต้องการ)
+bot.run(os.getenv('TOKEN'))  # ใช้ Token จาก environment variable หรือจากตัวแปร TOKEN ในโค้ด
