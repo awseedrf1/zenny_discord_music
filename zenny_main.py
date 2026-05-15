@@ -13,12 +13,19 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s: %(message)s')
 logger = logging.getLogger('zenny_bot')
 
-# 2. Bot Setup
+# 2. Check for Allowed Channels
+def parse_allowed_ids(value):
+    if not value: return []
+    return [int(i.strip()) for i in value.split(',') if i.strip().isdigit()]
+
+ALLOWED_CHANNEL_IDS = parse_allowed_ids(os.getenv('ALLOWED_CHANNEL_IDS', ''))
+
+# 3. Bot Setup
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# 3. Queue System
+# 4. Queue System
 queues = {}
 
 class MusicQueue:
@@ -32,7 +39,7 @@ def get_queue(ctx):
     if ctx.guild.id not in queues: queues[ctx.guild.id] = MusicQueue()
     return queues[ctx.guild.id]
 
-# 4. Audio Source Implementation (pytubefix)
+# 5. Audio Settings
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'
@@ -40,45 +47,55 @@ FFMPEG_OPTIONS = {
 
 async def play_next(ctx):
     q = get_queue(ctx)
-    url = q.next()
+    query = q.next()
     
-    if url:
+    if query:
         async with ctx.typing():
             try:
-                # Use pytubefix to get the best audio stream
-                # We use use_oauth=False to avoid needing a login, 
-                # but it uses InnerTube API by default for bypass.
-                if "youtube.com" not in url and "youtu.be" not in url:
-                    # If it's a search query
-                    s = Search(url)
+                # 🛡️ STEALTH BYPASS LOGIC 🛡️
+                # We try multiple high-trust clients if one fails
+                video = None
+                audio_stream = None
+                
+                if "youtube.com" not in query and "youtu.be" not in query:
+                    s = Search(query)
                     video = s.results[0]
                 else:
-                    video = YouTube(url, client='ANDROID_TESTSUITE') # Stealth client
+                    # Try WEB_CREATOR first (Highest trust)
+                    try:
+                        video = YouTube(query, client='WEB_CREATOR')
+                        audio_stream = video.streams.get_audio_only()
+                    except:
+                        # Fallback to TVHTML5 (Most stable)
+                        video = YouTube(query, client='TVHTML5')
+                        audio_stream = video.streams.get_audio_only()
 
-                audio_stream = video.streams.get_audio_only()
-                source_url = audio_stream.url
+                if not audio_stream:
+                    audio_stream = video.streams.get_audio_only()
+
+                player = discord.FFmpegPCMAudio(audio_stream.url, **FFMPEG_OPTIONS)
                 
-                player = discord.FFmpegPCMAudio(source_url, **FFMPEG_OPTIONS)
                 ctx.voice_client.play(player, after=lambda e: bot.loop.create_task(play_next(ctx)))
-                
                 await ctx.send(f'🎵 Now Playing: **{video.title}**')
-                logger.info(f"Playing: {video.title}")
                 
             except Exception as e:
-                logger.error(f"Pytube Error: {e}")
-                await ctx.send(f"❌ Playback Error: {e}")
+                logger.error(f"Playback Error: {e}")
+                await ctx.send(f"❌ Playback Error (YouTube Blocked this attempt): {e}")
                 bot.loop.create_task(play_next(ctx))
-    else:
-        logger.info(f"Queue empty for {ctx.guild.name}")
 
-# 5. Commands
+# 6. Commands
+@bot.check
+async def is_allowed(ctx):
+    if not ALLOWED_CHANNEL_IDS or ctx.channel.id in ALLOWED_CHANNEL_IDS:
+        return True
+    return False
+
 @bot.event
 async def on_ready():
     logger.info(f'Logged in as {bot.user}')
 
 @bot.command()
 async def play(ctx, *, query):
-    """Play song (No yt-dlp version)"""
     if not ctx.author.voice:
         return await ctx.send("❌ Join a Voice Channel first!")
 
@@ -88,7 +105,6 @@ async def play(ctx, *, query):
         await ctx.voice_client.move_to(ctx.author.voice.channel)
 
     q = get_queue(ctx)
-    
     if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
         q.add(query)
         await ctx.send(f"➕ Added to queue (Position: {len(q.items)})")
@@ -97,28 +113,18 @@ async def play(ctx, *, query):
         await play_next(ctx)
 
 @bot.command()
-async def skip(ctx):
-    if ctx.voice_client and ctx.voice_client.is_playing():
-        ctx.voice_client.stop()
-        await ctx.send("⏭️ Skipped!")
-
-@bot.command()
 async def stop(ctx):
     get_queue(ctx).clear()
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
         await ctx.send("👋 Disconnected.")
 
-@bot.event
-async def on_command_error(ctx, error):
-    if not isinstance(error, commands.CommandNotFound):
-        logger.error(f"Error: {error}")
-        await ctx.send(f"❌ Error: {error}")
+@bot.command()
+async def skip(ctx):
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        ctx.voice_client.stop()
+        await ctx.send("⏭️ Skipped!")
 
 if __name__ == "__main__":
     keep_alive()
-    token = os.getenv('TOKEN')
-    if token:
-        bot.run(token)
-    else:
-        logger.error("TOKEN MISSING!")
+    bot.run(os.getenv('TOKEN'))
