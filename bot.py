@@ -1,9 +1,8 @@
 import discord
 from discord.ext import commands
-import yt_dlp
+import wavelink
 import asyncio
 import os
-from collections import deque
 from dotenv import load_dotenv
 from keep_alive import keep_alive
 
@@ -25,22 +24,23 @@ if _channel_env:
         if cid.isdigit():
             ALLOWED_CHANNEL_IDS.add(int(cid))
 
-# เก็บคิวเพลงของแต่ละ server (guild)
-queues = {}
+# Lavalink server config
+LAVALINK_HOST = os.getenv('LAVALINK_HOST', 'lavalink.jirayu.net')
+LAVALINK_PORT = int(os.getenv('LAVALINK_PORT', '13592'))
+LAVALINK_PASSWORD = os.getenv('LAVALINK_PASSWORD', 'youshallnotpass')
+LAVALINK_SECURE = os.getenv('LAVALINK_SECURE', 'false').lower() == 'true'
 
 
 @bot.check
 async def restrict_to_allowed_channel(ctx):
-    """จำกัดให้ใช้คำสั่งได้เฉพาะ text channel ที่กำหนดเท่านั้น"""
-    # ถ้าไม่ได้ตั้งค่า ALLOWED_CHANNEL_IDS ให้ใช้ได้ทุก channel
+    """จำกัดให้ใช้คำสั่งได้เฉพาะ text channel ที่กำหนด"""
     if not ALLOWED_CHANNEL_IDS:
         return True
     if ctx.channel.id in ALLOWED_CHANNEL_IDS:
         return True
-    # แจ้งเตือนแบบเบาๆ (ลบทิ้งใน 5 วินาที) ว่า channel นี้ใช้ไม่ได้
     try:
         allowed_mentions = ", ".join(f"<#{cid}>" for cid in ALLOWED_CHANNEL_IDS)
-        msg = await ctx.send(
+        await ctx.send(
             f"❌ คำสั่งนี้ใช้ได้เฉพาะใน {allowed_mentions} เท่านั้น",
             delete_after=5
         )
@@ -48,122 +48,24 @@ async def restrict_to_allowed_channel(ctx):
         pass
     return False
 
-# ตั้งค่า yt-dlp
-YTDL_OPTIONS = {
-    'format': 'bestaudio/best',
-    'noplaylist': True,
-    'quiet': True,
-    'no_warnings': True,
-    'default_search': 'ytsearch',
-    'source_address': '0.0.0.0',
-    'extract_flat': False,
-    # ใช้ player client หลายตัวเพื่อหลบ bot detection ของ YouTube
-    'extractor_args': {
-        'youtube': {
-            'player_client': ['android', 'web', 'ios', 'mweb', 'tv'],
-            'player_skip': ['configs'],
-        }
-    },
-    # ปลอม User-Agent ให้ดูเหมือน browser จริง
-    'http_headers': {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-    },
-    'retries': 3,
-    'fragment_retries': 3,
-    'skip_unavailable_fragments': True,
-}
 
-# ถ้ามีไฟล์ cookies.txt ให้ใช้ (ช่วยแก้ปัญหา "Sign in to confirm you're not a bot")
-COOKIES_FILE = os.getenv('COOKIES_FILE', 'cookies.txt')
-if os.path.exists(COOKIES_FILE):
-    YTDL_OPTIONS['cookiefile'] = COOKIES_FILE
-    print(f'🍪 ใช้ cookies จากไฟล์: {COOKIES_FILE}')
+async def connect_lavalink():
+    """เชื่อมต่อกับ Lavalink server"""
+    scheme = 'https' if LAVALINK_SECURE else 'http'
+    uri = f'{scheme}://{LAVALINK_HOST}:{LAVALINK_PORT}'
+    print(f'🔗 กำลังเชื่อมต่อ Lavalink: {uri}')
 
-FFMPEG_OPTIONS = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn'
-}
-
-ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
-
-
-def get_queue(guild_id):
-    """ดึงคิวของ server นั้นๆ ถ้าไม่มีให้สร้างใหม่"""
-    if guild_id not in queues:
-        queues[guild_id] = deque()
-    return queues[guild_id]
-
-
-async def search_song(query):
-    """ค้นหาเพลงจาก YouTube"""
-    loop = asyncio.get_event_loop()
+    node = wavelink.Node(
+        identifier='MAIN',
+        uri=uri,
+        password=LAVALINK_PASSWORD,
+    )
     try:
-        data = await loop.run_in_executor(
-            None,
-            lambda: ytdl.extract_info(query, download=False)
-        )
-        if data is None:
-            print("Error: ytdl.extract_info returned None")
-            return None
-        # ถ้าเป็นผลค้นหา จะมี entries
-        if 'entries' in data:
-            entries = data['entries']
-            if not entries:
-                print("Error: No entries found in search results")
-                return None
-            data = entries[0]
-        return {
-            'url': data['url'],
-            'title': data.get('title', 'Unknown'),
-            'duration': data.get('duration', 0),
-            'webpage_url': data.get('webpage_url', ''),
-            'thumbnail': data.get('thumbnail', '')
-        }
+        await wavelink.Pool.connect(client=bot, nodes=[node])
+        print('✅ เชื่อมต่อ Lavalink สำเร็จ')
     except Exception as e:
-        # print error เต็มๆ เพื่อ debug
-        import traceback
-        print(f"❌ Error searching song: {type(e).__name__}: {e}")
-        traceback.print_exc()
-        # เก็บ error message ไว้ใน attribute เพื่อให้ caller ใช้ได้
-        search_song.last_error = str(e)
-        return None
-
-
-async def play_next(ctx):
-    """เล่นเพลงถัดไปในคิว"""
-    queue = get_queue(ctx.guild.id)
-
-    if len(queue) == 0:
-        return
-
-    song = queue.popleft()
-    voice_client = ctx.voice_client
-
-    if voice_client is None:
-        return
-
-    try:
-        source = discord.FFmpegPCMAudio(song['url'], **FFMPEG_OPTIONS)
-        voice_client.play(
-            source,
-            after=lambda e: asyncio.run_coroutine_threadsafe(
-                play_next(ctx), bot.loop
-            ).result() if not e else print(f"Player error: {e}")
-        )
-
-        embed = discord.Embed(
-            title="🎵 กำลังเล่น",
-            description=f"**[{song['title']}]({song['webpage_url']})**",
-            color=discord.Color.green()
-        )
-        if song.get('thumbnail'):
-            embed.set_thumbnail(url=song['thumbnail'])
-        await ctx.send(embed=embed)
-    except Exception as e:
-        await ctx.send(f"❌ เกิดข้อผิดพลาด: {str(e)}")
-        if len(queue) > 0:
-            await play_next(ctx)
+        print(f'❌ เชื่อมต่อ Lavalink ล้มเหลว: {e}')
+        print(f'💡 ลองเปลี่ยน LAVALINK_HOST/PORT/PASSWORD ใน environment variables')
 
 
 @bot.event
@@ -174,6 +76,15 @@ async def on_ready():
         print(f'🔒 จำกัดคำสั่งเฉพาะ channel: {", ".join(str(c) for c in ALLOWED_CHANNEL_IDS)}')
     else:
         print('🌐 อนุญาตทุก channel (ไม่ได้ตั้ง ALLOWED_CHANNEL_IDS)')
+
+    # เคลียร์ voice connection ค้างเก่า (แก้ error 4006)
+    for vc in list(bot.voice_clients):
+        try:
+            await vc.disconnect(force=True)
+        except Exception:
+            pass
+
+    await connect_lavalink()
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.listening,
@@ -182,94 +93,142 @@ async def on_ready():
     )
 
 
-@bot.command(name='play', aliases=['p'])
-async def play(ctx, *, query: str = None):
-    """เล่นเพลงจาก YouTube"""
-    if query is None:
-        await ctx.send("❌ กรุณาระบุชื่อเพลงหรือลิงก์ YouTube\nตัวอย่าง: `!play despacito`")
+@bot.event
+async def on_wavelink_node_ready(payload: wavelink.NodeReadyEventPayload):
+    print(f'🎵 Lavalink Node "{payload.node.identifier}" พร้อมใช้งาน (resumed: {payload.resumed})')
+
+
+@bot.event
+async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
+    """เล่นเพลงถัดไปในคิวเมื่อเพลงปัจจุบันจบ"""
+    player: wavelink.Player = payload.player
+    if player is None:
         return
 
-    # ตรวจสอบว่าผู้ใช้อยู่ใน voice channel หรือไม่
+    if not player.queue.is_empty:
+        next_track = player.queue.get()
+        await player.play(next_track)
+
+        # ส่งข้อความแจ้งใน channel ที่ผูกไว้
+        channel = getattr(player, 'home_channel', None)
+        if channel:
+            try:
+                embed = discord.Embed(
+                    title="🎵 กำลังเล่น",
+                    description=f"**[{next_track.title}]({next_track.uri})**",
+                    color=discord.Color.green()
+                )
+                if next_track.artwork:
+                    embed.set_thumbnail(url=next_track.artwork)
+                await channel.send(embed=embed)
+            except Exception as e:
+                print(f'Error sending now-playing message: {e}')
+
+
+@bot.command(name='play', aliases=['p'])
+async def play(ctx, *, query: str = None):
+    """เล่นเพลงจาก YouTube/SoundCloud"""
+    if query is None:
+        await ctx.send("❌ กรุณาระบุชื่อเพลงหรือลิงก์\nตัวอย่าง: `!play despacito`")
+        return
+
     if ctx.author.voice is None:
         await ctx.send("❌ คุณต้องเข้า voice channel ก่อน")
         return
 
     voice_channel = ctx.author.voice.channel
 
-    # เชื่อมต่อกับ voice channel
-    if ctx.voice_client is None:
+    # เชื่อมต่อ voice channel
+    player: wavelink.Player = ctx.voice_client
+    if player is None:
         try:
-            await voice_channel.connect()
+            player = await voice_channel.connect(cls=wavelink.Player, self_deaf=True)
         except Exception as e:
-            await ctx.send(f"❌ ไม่สามารถเชื่อมต่อกับ voice channel: {str(e)}")
+            await ctx.send(f"❌ ไม่สามารถเชื่อมต่อ voice channel: {str(e)[:200]}")
             return
-    elif ctx.voice_client.channel != voice_channel:
-        await ctx.voice_client.move_to(voice_channel)
+    elif player.channel != voice_channel:
+        await player.move_to(voice_channel)
+
+    # ผูก channel ไว้กับ player เพื่อใช้ส่งข้อความ
+    player.home_channel = ctx.channel
 
     # ค้นหาเพลง
     async with ctx.typing():
-        await ctx.send(f"🔍 กำลังค้นหา: `{query}`...")
-        song = await search_song(query)
-
-        if song is None:
-            err_msg = getattr(search_song, 'last_error', None)
-            if err_msg:
-                # ตัด error ให้สั้นพอที่จะส่งใน Discord
-                err_short = err_msg[:500]
-                await ctx.send(f"❌ ไม่พบเพลงที่ค้นหา\n```{err_short}```")
-            else:
-                await ctx.send("❌ ไม่พบเพลงที่ค้นหา")
+        await ctx.send(f"🔍 กำลังค้นหา: `{query}`")
+        try:
+            tracks: wavelink.Search = await wavelink.Playable.search(query)
+        except Exception as e:
+            await ctx.send(f"❌ เกิดข้อผิดพลาดในการค้นหา\n```{str(e)[:300]}```")
             return
 
-        queue = get_queue(ctx.guild.id)
-        queue.append(song)
+        if not tracks:
+            await ctx.send("❌ ไม่พบเพลงที่ค้นหา")
+            return
 
-        if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
-            embed = discord.Embed(
-                title="➕ เพิ่มเพลงในคิว",
-                description=f"**[{song['title']}]({song['webpage_url']})**\nลำดับที่: `{len(queue)}`",
-                color=discord.Color.blue()
-            )
-            if song.get('thumbnail'):
-                embed.set_thumbnail(url=song['thumbnail'])
-            await ctx.send(embed=embed)
+        # ถ้าเป็น playlist ใส่ทั้งหมด, ถ้าเป็นเพลงเดียวใส่อันแรก
+        if isinstance(tracks, wavelink.Playlist):
+            added = await player.queue.put_wait(tracks)
+            await ctx.send(f"➕ เพิ่ม `{added}` เพลงจาก playlist **{tracks.name}** ลงคิว")
         else:
-            await play_next(ctx)
+            track = tracks[0]
+            await player.queue.put_wait(track)
+
+            if player.playing:
+                embed = discord.Embed(
+                    title="➕ เพิ่มเพลงในคิว",
+                    description=f"**[{track.title}]({track.uri})**\nลำดับที่: `{len(player.queue)}`",
+                    color=discord.Color.blue()
+                )
+                if track.artwork:
+                    embed.set_thumbnail(url=track.artwork)
+                await ctx.send(embed=embed)
+
+        # ถ้าไม่ได้เล่นอะไรอยู่ ให้เริ่มเล่น
+        if not player.playing:
+            next_track = player.queue.get()
+            await player.play(next_track)
+            embed = discord.Embed(
+                title="🎵 กำลังเล่น",
+                description=f"**[{next_track.title}]({next_track.uri})**",
+                color=discord.Color.green()
+            )
+            if next_track.artwork:
+                embed.set_thumbnail(url=next_track.artwork)
+            await ctx.send(embed=embed)
 
 
 @bot.command(name='queue', aliases=['q'])
 async def show_queue(ctx):
     """แสดงคิวเพลง"""
-    queue = get_queue(ctx.guild.id)
+    player: wavelink.Player = ctx.voice_client
+    if player is None:
+        await ctx.send("📭 บอทไม่ได้อยู่ใน voice channel")
+        return
 
-    if len(queue) == 0 and (ctx.voice_client is None or not ctx.voice_client.is_playing()):
+    if not player.playing and player.queue.is_empty:
         await ctx.send("📭 คิวว่างเปล่า")
         return
 
-    embed = discord.Embed(
-        title="📜 คิวเพลง",
-        color=discord.Color.purple()
-    )
+    embed = discord.Embed(title="📜 คิวเพลง", color=discord.Color.purple())
 
-    # แสดงเพลงที่กำลังเล่นอยู่
-    if ctx.voice_client and (ctx.voice_client.is_playing() or ctx.voice_client.is_paused()):
+    if player.current:
         embed.add_field(
             name="🎵 กำลังเล่น",
-            value="เพลงปัจจุบัน",
+            value=f"[{player.current.title}]({player.current.uri})",
             inline=False
         )
 
-    # แสดงคิว (สูงสุด 10 เพลง)
-    if len(queue) > 0:
+    if not player.queue.is_empty:
+        queue_list = list(player.queue)[:10]
         queue_text = ""
-        for i, song in enumerate(list(queue)[:10], 1):
-            queue_text += f"`{i}.` [{song['title']}]({song['webpage_url']})\n"
+        for i, track in enumerate(queue_list, 1):
+            queue_text += f"`{i}.` [{track.title}]({track.uri})\n"
 
-        if len(queue) > 10:
-            queue_text += f"\n... และอีก `{len(queue) - 10}` เพลง"
+        if len(player.queue) > 10:
+            queue_text += f"\n... และอีก `{len(player.queue) - 10}` เพลง"
 
         embed.add_field(
-            name=f"📋 ในคิว ({len(queue)} เพลง)",
+            name=f"📋 ในคิว ({len(player.queue)} เพลง)",
             value=queue_text,
             inline=False
         )
@@ -280,67 +239,70 @@ async def show_queue(ctx):
 @bot.command(name='skip', aliases=['s'])
 async def skip(ctx):
     """ข้ามเพลงปัจจุบัน"""
-    if ctx.voice_client is None or not ctx.voice_client.is_playing():
+    player: wavelink.Player = ctx.voice_client
+    if player is None or not player.playing:
         await ctx.send("❌ ไม่มีเพลงที่กำลังเล่น")
         return
 
-    ctx.voice_client.stop()
+    await player.skip(force=True)
     await ctx.send("⏭️ ข้ามเพลง")
 
 
 @bot.command(name='stop')
 async def stop(ctx):
-    """หยุดเล่นเพลงและเคลียร์คิว"""
-    if ctx.voice_client is None:
-        await ctx.send("❌ Bot ไม่ได้อยู่ใน voice channel")
+    """หยุดเล่นและเคลียร์คิว"""
+    player: wavelink.Player = ctx.voice_client
+    if player is None:
+        await ctx.send("❌ บอทไม่ได้อยู่ใน voice channel")
         return
 
-    queue = get_queue(ctx.guild.id)
-    queue.clear()
-
-    if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
-        ctx.voice_client.stop()
-
-    await ctx.send("⏹️ หยุดเล่นเพลงและเคลียร์คิวแล้ว")
+    player.queue.clear()
+    await player.stop()
+    await ctx.send("⏹️ หยุดเล่นและเคลียร์คิวแล้ว")
 
 
 @bot.command(name='kick', aliases=['leave', 'disconnect', 'dc'])
 async def kick(ctx):
     """เตะบอทออกจาก voice channel"""
-    if ctx.voice_client is None:
-        await ctx.send("❌ Bot ไม่ได้อยู่ใน voice channel")
+    player: wavelink.Player = ctx.voice_client
+    if player is None:
+        await ctx.send("❌ บอทไม่ได้อยู่ใน voice channel")
         return
 
-    queue = get_queue(ctx.guild.id)
-    queue.clear()
-
-    await ctx.voice_client.disconnect()
+    player.queue.clear()
+    await player.disconnect()
     await ctx.send("👋 บอทออกจาก voice channel แล้ว")
 
 
 @bot.command(name='pause')
 async def pause(ctx):
     """หยุดเพลงชั่วคราว"""
-    if ctx.voice_client is None or not ctx.voice_client.is_playing():
+    player: wavelink.Player = ctx.voice_client
+    if player is None or not player.playing:
         await ctx.send("❌ ไม่มีเพลงที่กำลังเล่น")
         return
 
-    ctx.voice_client.pause()
+    if player.paused:
+        await ctx.send("❌ เพลงถูกหยุดอยู่แล้ว ใช้ `!resume` เพื่อเล่นต่อ")
+        return
+
+    await player.pause(True)
     await ctx.send("⏸️ หยุดเพลงชั่วคราว")
 
 
 @bot.command(name='resume', aliases=['r'])
 async def resume(ctx):
     """เล่นเพลงต่อ"""
-    if ctx.voice_client is None:
-        await ctx.send("❌ Bot ไม่ได้อยู่ใน voice channel")
+    player: wavelink.Player = ctx.voice_client
+    if player is None:
+        await ctx.send("❌ บอทไม่ได้อยู่ใน voice channel")
         return
 
-    if not ctx.voice_client.is_paused():
+    if not player.paused:
         await ctx.send("❌ เพลงไม่ได้ถูกหยุดอยู่")
         return
 
-    ctx.voice_client.resume()
+    await player.pause(False)
     await ctx.send("▶️ เล่นเพลงต่อ")
 
 
@@ -352,7 +314,7 @@ async def help_command(ctx):
         color=discord.Color.gold()
     )
     commands_list = [
-        ("!play [เพลง/Link]", "เล่นเพลงจาก YouTube"),
+        ("!play [เพลง/Link]", "เล่นเพลงจาก YouTube/SoundCloud"),
         ("!queue", "ดูคิวเพลง"),
         ("!skip", "ข้ามเพลงปัจจุบัน"),
         ("!stop", "หยุดเล่นและเคลียร์คิว"),
@@ -362,20 +324,20 @@ async def help_command(ctx):
     ]
     for cmd, desc in commands_list:
         embed.add_field(name=cmd, value=desc, inline=False)
-
     await ctx.send(embed=embed)
 
 
 @bot.event
 async def on_command_error(ctx, error):
-    """จัดการ error"""
     if isinstance(error, commands.CommandNotFound):
         return
-    # check ล้มเหลว (เช่น ใช้ผิด channel) เราแจ้งเตือนแล้วใน check ไม่ต้องแจ้งซ้ำ
     if isinstance(error, commands.CheckFailure):
         return
-    print(f"Error: {error}")
-    await ctx.send(f"❌ เกิดข้อผิดพลาด: {str(error)}")
+    print(f"Error: {type(error).__name__}: {error}")
+    try:
+        await ctx.send(f"❌ เกิดข้อผิดพลาด: {str(error)[:300]}")
+    except Exception:
+        pass
 
 
 # เริ่ม web server เพื่อให้ Render ไม่ปิดบอท

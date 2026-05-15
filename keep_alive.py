@@ -21,7 +21,6 @@ def run():
 
 
 def keep_alive():
-    """เริ่ม web server ใน thread แยก"""
     t = Thread(target=run)
     t.daemon = True
     t.start()
