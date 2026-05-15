@@ -143,6 +143,13 @@ async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
     if player is None:
         return
 
+    reason = getattr(payload, 'reason', 'unknown')
+    print(f'🎵 เพลงจบ (reason: {reason}): {payload.track.title if payload.track else "?"}')
+
+    # ถ้าเพลงจบเพราะ replaced หรือ stopped ไม่ต้องเล่นต่อ (มีคนกด skip/stop)
+    if reason in ('replaced', 'stopped'):
+        return
+
     if not player.queue.is_empty:
         next_track = player.queue.get()
         await player.play(next_track)
@@ -154,6 +161,91 @@ async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
                 await channel.send(embed=embed)
             except Exception as e:
                 print(f'Error sending now-playing message: {e}')
+    else:
+        # คิวว่าง → เริ่มนับเวลา idle (auto-disconnect ใน 5 นาที)
+        bot.loop.create_task(idle_disconnect(player))
+
+
+@bot.event
+async def on_wavelink_track_exception(payload: wavelink.TrackExceptionEventPayload):
+    """เมื่อเพลงเล่นไม่ได้ → ข้ามไปเพลงถัดไป"""
+    player: wavelink.Player = payload.player
+    track = payload.track
+    exception = payload.exception
+
+    err_msg = exception.get('message', 'Unknown error') if isinstance(exception, dict) else str(exception)
+    print(f'❌ Track exception: {err_msg} | track: {track.title if track else "?"}')
+
+    channel = getattr(player, 'home_channel', None)
+    if channel:
+        try:
+            embed = discord.Embed(
+                title="⚠️ เล่นเพลงไม่ได้",
+                description=f"**{track.title if track else 'เพลง'}**\n```{err_msg[:200]}```",
+                color=discord.Color.orange()
+            )
+            if not player.queue.is_empty:
+                embed.set_footer(text="กำลังข้ามไปเพลงถัดไป...")
+            await channel.send(embed=embed)
+        except Exception:
+            pass
+
+    # ลองเล่นเพลงถัดไป
+    if player and not player.queue.is_empty:
+        next_track = player.queue.get()
+        try:
+            await player.play(next_track)
+            if channel:
+                embed = build_now_playing_embed(next_track, queue_size=len(player.queue))
+                await channel.send(embed=embed)
+        except Exception as e:
+            print(f'Failed to play next track: {e}')
+
+
+@bot.event
+async def on_wavelink_track_stuck(payload: wavelink.TrackStuckEventPayload):
+    """เมื่อเพลงค้าง (streaming stuck) → ข้ามไปเพลงถัดไป"""
+    player: wavelink.Player = payload.player
+    track = payload.track
+    print(f'⚠️ Track stuck: {track.title if track else "?"} (threshold: {payload.threshold}ms)')
+
+    channel = getattr(player, 'home_channel', None)
+    if channel:
+        try:
+            embed = discord.Embed(
+                description=f"⚠️ เพลง **{track.title if track else '?'}** ค้าง กำลังข้าม...",
+                color=discord.Color.orange()
+            )
+            await channel.send(embed=embed)
+        except Exception:
+            pass
+
+    if player and not player.queue.is_empty:
+        next_track = player.queue.get()
+        try:
+            await player.play(next_track)
+        except Exception:
+            pass
+
+
+async def idle_disconnect(player: wavelink.Player, timeout: int = 300):
+    """ถ้าคิวว่างและไม่มีอะไรเล่นเกินกำหนด → เตะออกอัตโนมัติ"""
+    await asyncio.sleep(timeout)
+    if player and player.connected and player.queue.is_empty and not player.playing:
+        channel = getattr(player, 'home_channel', None)
+        if channel:
+            try:
+                embed = discord.Embed(
+                    description=f"💤 ไม่มีเพลงนาน {timeout // 60} นาที — บอทออกจาก voice แล้ว",
+                    color=discord.Color.greyple()
+                )
+                await channel.send(embed=embed)
+            except Exception:
+                pass
+        try:
+            await player.disconnect()
+        except Exception:
+            pass
 
 
 @bot.command(name='play', aliases=['p'])
