@@ -218,10 +218,37 @@ async def on_wavelink_track_exception(payload: wavelink.TrackExceptionEventPaylo
                 color=discord.Color.orange()
             )
             embed.set_footer(text=footer)
-            await channel.send(embed=embed)
+
+            pending_msg = getattr(player, '_pending_status_msg', None)
+            if pending_msg:
+                await pending_msg.edit(embed=embed)
+            else:
+                await channel.send(embed=embed)
         except Exception:
             pass
     # on_wavelink_track_end จะจัดการเล่นเพลงถัดไปเมื่อ Lavalink ส่ง loadFailed
+
+
+@bot.event
+async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
+    """เมื่อเพลงเริ่มเล่น"""
+    player: wavelink.Player = payload.player
+    track = payload.track
+    pending_msg = getattr(player, '_pending_status_msg', None)
+    if pending_msg:
+        try:
+            requester = getattr(player, '_pending_status_requester', None)
+            embed = build_now_playing_embed(
+                track,
+                requester=requester,
+                queue_size=len(player.queue)
+            )
+            await pending_msg.edit(embed=embed)
+        except Exception:
+            pass
+        finally:
+            player._pending_status_msg = None
+            player._pending_status_requester = None
 
 
 @bot.event
@@ -311,6 +338,9 @@ async def play(ctx, *, query: str = None):
 
     player.autoplay = wavelink.AutoPlayMode.disabled
     player.home_channel = ctx.channel
+    if not player.playing:
+        player._pending_status_msg = status_msg
+        player._pending_status_requester = ctx.author
 
     # ยกเลิก idle timer ถ้ามีอยู่ (ป้องกันบอทถูกเตะขณะกำลังเล่น)
     old_task = getattr(player, '_idle_task', None)
