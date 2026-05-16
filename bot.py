@@ -14,6 +14,7 @@ intents.message_content = True
 intents.voice_states = True
 
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
+bot.remove_command('help')
 
 # อ่าน Channel ID ที่อนุญาตให้ใช้คำสั่ง (รองรับหลาย channel คั่นด้วย ,)
 ALLOWED_CHANNEL_IDS = set()
@@ -95,6 +96,19 @@ def build_now_playing_embed(track, requester=None, queue_size=0, playlist_info=N
             icon_url=requester.display_avatar.url
         )
     return embed
+
+
+COMMAND_RESPONSE_DELAY = 1.5
+
+async def send_embed_and_wait(ctx, embed):
+    msg = await ctx.send(embed=embed)
+    await asyncio.sleep(COMMAND_RESPONSE_DELAY)
+    return msg
+
+async def edit_embed_and_wait(message, embed):
+    msg = await message.edit(embed=embed)
+    await asyncio.sleep(COMMAND_RESPONSE_DELAY)
+    return msg
 
 
 async def connect_lavalink():
@@ -267,7 +281,7 @@ async def play(ctx, *, query: str = None):
             description="กรุณาระบุชื่อเพลงหรือลิงก์\nตัวอย่าง: `!play despacito`",
             color=discord.Color.red()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     if ctx.author.voice is None:
@@ -275,7 +289,7 @@ async def play(ctx, *, query: str = None):
             description="❌ คุณต้องเข้า voice channel ก่อน",
             color=discord.Color.red()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     voice_channel = ctx.author.voice.channel
@@ -298,7 +312,7 @@ async def play(ctx, *, query: str = None):
                 description=f"```{str(e)[:200]}```",
                 color=discord.Color.red()
             )
-            await status_msg.edit(embed=embed)
+            await edit_embed_and_wait(status_msg, embed)
             return
     elif player.channel != voice_channel:
         await player.move_to(voice_channel)
@@ -315,7 +329,7 @@ async def play(ctx, *, query: str = None):
             description=f"```{str(e)[:300]}```",
             color=discord.Color.red()
         )
-        await status_msg.edit(embed=embed)
+        await edit_embed_and_wait(status_msg, embed)
         return
 
     if not tracks:
@@ -323,7 +337,7 @@ async def play(ctx, *, query: str = None):
             description="❌ ไม่พบเพลงที่ค้นหา",
             color=discord.Color.red()
         )
-        await status_msg.edit(embed=embed)
+        await edit_embed_and_wait(status_msg, embed)
         return
 
     # ถ้าเป็น playlist ใส่ทั้งหมด, ถ้าเป็นเพลงเดียวใส่อันแรก
@@ -349,7 +363,7 @@ async def play(ctx, *, query: str = None):
                 text=f"ขอโดย {ctx.author.display_name}",
                 icon_url=ctx.author.display_avatar.url
             )
-        await status_msg.edit(embed=embed)
+        await edit_embed_and_wait(status_msg, embed)
     else:
         track = tracks[0]
         await player.queue.put_wait(track)
@@ -372,7 +386,7 @@ async def play(ctx, *, query: str = None):
                 text=f"ขอโดย {ctx.author.display_name}",
                 icon_url=ctx.author.display_avatar.url
             )
-            await status_msg.edit(embed=embed)
+            await edit_embed_and_wait(status_msg, embed)
         else:
             # ไม่มีอะไรเล่นอยู่ → เริ่มเล่น
             next_track = player.queue.get()
@@ -382,7 +396,7 @@ async def play(ctx, *, query: str = None):
                 ctx.author,
                 queue_size=len(player.queue)
             )
-            await status_msg.edit(embed=embed)
+            await edit_embed_and_wait(status_msg, embed)
 
 
 @bot.command(name='queue', aliases=['q'])
@@ -394,7 +408,7 @@ async def show_queue(ctx):
             description="📭 บอทไม่ได้อยู่ใน voice channel",
             color=discord.Color.light_grey()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     if not player.playing and player.queue.is_empty:
@@ -402,7 +416,7 @@ async def show_queue(ctx):
             description="📭 คิวว่างเปล่า",
             color=discord.Color.light_grey()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     embed = discord.Embed(title="📜 คิวเพลง", color=discord.Color.purple())
@@ -442,7 +456,7 @@ async def show_queue(ctx):
         if total_duration > 0:
             embed.set_footer(text=f"⏱️ ความยาวคิวรวม: {format_duration(total_duration)}")
 
-    await ctx.send(embed=embed)
+    await send_embed_and_wait(ctx, embed)
 
 
 @bot.command(name='skip', aliases=['s'])
@@ -454,7 +468,7 @@ async def skip(ctx):
             description="❌ ไม่มีเพลงที่กำลังเล่น",
             color=discord.Color.red()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     current_title = player.current.title if player.current else "เพลง"
@@ -467,7 +481,7 @@ async def skip(ctx):
         text=f"ขอโดย {ctx.author.display_name}",
         icon_url=ctx.author.display_avatar.url
     )
-    await ctx.send(embed=embed)
+    await send_embed_and_wait(ctx, embed)
 
 
 @bot.command(name='stop')
@@ -479,7 +493,7 @@ async def stop(ctx):
             description="❌ บอทไม่ได้อยู่ใน voice channel",
             color=discord.Color.red()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     queue_count = len(player.queue)
@@ -494,7 +508,7 @@ async def stop(ctx):
         text=f"ขอโดย {ctx.author.display_name}",
         icon_url=ctx.author.display_avatar.url
     )
-    await ctx.send(embed=embed)
+    await send_embed_and_wait(ctx, embed)
 
 
 @bot.command(name='kick', aliases=['leave', 'disconnect', 'dc'])
@@ -506,7 +520,7 @@ async def kick(ctx):
             description="❌ บอทไม่ได้อยู่ใน voice channel",
             color=discord.Color.red()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     player.queue.clear()
@@ -519,7 +533,7 @@ async def kick(ctx):
         text=f"ขอโดย {ctx.author.display_name}",
         icon_url=ctx.author.display_avatar.url
     )
-    await ctx.send(embed=embed)
+    await send_embed_and_wait(ctx, embed)
 
 
 @bot.command(name='pause')
@@ -531,7 +545,7 @@ async def pause(ctx):
             description="❌ ไม่มีเพลงที่กำลังเล่น",
             color=discord.Color.red()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     if player.paused:
@@ -539,7 +553,7 @@ async def pause(ctx):
             description="⚠️ เพลงถูกหยุดอยู่แล้ว ใช้ `!resume` เพื่อเล่นต่อ",
             color=discord.Color.yellow()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     await player.pause(True)
@@ -551,7 +565,7 @@ async def pause(ctx):
         text=f"ขอโดย {ctx.author.display_name}",
         icon_url=ctx.author.display_avatar.url
     )
-    await ctx.send(embed=embed)
+    await send_embed_and_wait(ctx, embed)
 
 
 @bot.command(name='resume', aliases=['r'])
@@ -563,7 +577,7 @@ async def resume(ctx):
             description="❌ บอทไม่ได้อยู่ใน voice channel",
             color=discord.Color.red()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     if not player.paused:
@@ -571,7 +585,7 @@ async def resume(ctx):
             description="⚠️ เพลงไม่ได้ถูกหยุดอยู่",
             color=discord.Color.yellow()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     await player.pause(False)
@@ -583,7 +597,7 @@ async def resume(ctx):
         text=f"ขอโดย {ctx.author.display_name}",
         icon_url=ctx.author.display_avatar.url
     )
-    await ctx.send(embed=embed)
+    await send_embed_and_wait(ctx, embed)
 
 
 @bot.command(name='mute')
@@ -595,7 +609,7 @@ async def mute(ctx):
             description="❌ บอทไม่ได้อยู่ใน voice channel",
             color=discord.Color.red()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     voice_state = ctx.guild.me.voice if ctx.guild and ctx.guild.me else None
@@ -604,7 +618,7 @@ async def mute(ctx):
             description="⚠️ บอทถูกปิดเสียงอยู่แล้ว",
             color=discord.Color.yellow()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     try:
@@ -617,14 +631,14 @@ async def mute(ctx):
             text=f"ขอโดย {ctx.author.display_name}",
             icon_url=ctx.author.display_avatar.url
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
     except Exception as e:
         embed = discord.Embed(
             title="❌ ไม่สามารถปิดเสียงบอทได้",
             description=f"```{str(e)[:200]}```",
             color=discord.Color.red()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
 
 
 @bot.command(name='unmute', aliases=['um'])
@@ -636,7 +650,7 @@ async def unmute(ctx):
             description="❌ บอทไม่ได้อยู่ใน voice channel",
             color=discord.Color.red()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     voice_state = ctx.guild.me.voice if ctx.guild and ctx.guild.me else None
@@ -645,7 +659,7 @@ async def unmute(ctx):
             description="⚠️ บอทยังไม่ถูกปิดเสียง",
             color=discord.Color.yellow()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
         return
 
     try:
@@ -658,14 +672,14 @@ async def unmute(ctx):
             text=f"ขอโดย {ctx.author.display_name}",
             icon_url=ctx.author.display_avatar.url
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
     except Exception as e:
         embed = discord.Embed(
             title="❌ ไม่สามารถเปิดเสียงบอทได้",
             description=f"```{str(e)[:200]}```",
             color=discord.Color.red()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
 
 
 @bot.command(name='help', aliases=['h', 'commands'])
@@ -686,7 +700,7 @@ async def help_command(ctx):
     embed.add_field(name="🔊 `!unmute`", value="เปิดเสียงบอทใน voice", inline=True)
     embed.add_field(name="👋 `!kick`", value="เตะบอทออก", inline=True)
     embed.set_footer(text="ใช้ ! นำหน้าทุกคำสั่ง")
-    await ctx.send(embed=embed)
+    await send_embed_and_wait(ctx, embed)
 
 
 @bot.event
@@ -702,7 +716,7 @@ async def on_command_error(ctx, error):
             description=f"```{str(error)[:300]}```",
             color=discord.Color.red()
         )
-        await ctx.send(embed=embed)
+        await send_embed_and_wait(ctx, embed)
     except Exception:
         pass
 
