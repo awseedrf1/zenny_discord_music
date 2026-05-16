@@ -24,11 +24,21 @@ if _channel_env:
         if cid.isdigit():
             ALLOWED_CHANNEL_IDS.add(int(cid))
 
-# Lavalink server config
-LAVALINK_HOST = os.getenv('LAVALINK_HOST', 'lavalink.jirayu.net')
-LAVALINK_PORT = int(os.getenv('LAVALINK_PORT', '13592'))
-LAVALINK_PASSWORD = os.getenv('LAVALINK_PASSWORD', 'youshallnotpass')
+# Lavalink server config (required from Render environment)
+LAVALINK_HOST = os.getenv('LAVALINK_HOST')
+LAVALINK_PORT = os.getenv('LAVALINK_PORT')
+LAVALINK_PASSWORD = os.getenv('LAVALINK_PASSWORD')
 LAVALINK_SECURE = os.getenv('LAVALINK_SECURE', 'false').lower() == 'true'
+
+if not LAVALINK_HOST or not LAVALINK_PORT or not LAVALINK_PASSWORD:
+    print('❌ Missing Lavalink configuration. Set LAVALINK_HOST, LAVALINK_PORT, and LAVALINK_PASSWORD in Render environment variables.')
+    exit(1)
+
+try:
+    LAVALINK_PORT = int(LAVALINK_PORT)
+except ValueError:
+    print('❌ Invalid LAVALINK_PORT. It must be a number.')
+    exit(1)
 
 
 @bot.check
