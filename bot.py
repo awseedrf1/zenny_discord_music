@@ -14,7 +14,7 @@ intents.message_content = True
 intents.voice_states = True
 
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
-bot.remove_command('help')
+bot.help_command = None
 
 # อ่าน Channel ID ที่อนุญาตให้ใช้คำสั่ง (รองรับหลาย channel คั่นด้วย ,)
 ALLOWED_CHANNEL_IDS = set()
@@ -623,7 +623,7 @@ async def mute(ctx):
         return
 
     try:
-        await ctx.guild.change_voice_state(channel=player.channel, self_mute=True)
+        await ctx.guild.change_voice_state(channel=player.channel, self_mute=True, self_deaf=True)
         embed = discord.Embed(
             description="🔇 บอทถูกปิดเสียงแล้ว",
             color=discord.Color.dark_grey()
@@ -664,7 +664,7 @@ async def unmute(ctx):
         return
 
     try:
-        await ctx.guild.change_voice_state(channel=player.channel, self_mute=False)
+        await ctx.guild.change_voice_state(channel=player.channel, self_mute=False, self_deaf=True)
         embed = discord.Embed(
             description="🔊 บอทเปิดเสียงแล้ว",
             color=discord.Color.green()
