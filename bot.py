@@ -172,7 +172,11 @@ async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
     print(f'🎵 เพลงจบ (reason: {reason_str}): {payload.track.title if payload.track else "?"}')
 
     # ถ้าเพลงจบเพราะ replaced หรือ stopped ไม่ต้องเล่นต่อ (มีคนกด skip/stop)
-    if reason_str in ('replaced', 'stopped'):
+    if reason_str.lower() in ('replaced', 'stopped', 'finished_dc'):
+        return
+
+    # ป้องกัน duplicate: ถ้า player กำลังเล่นอยู่แล้วให้หยุด
+    if player.playing:
         return
 
     if not player.queue.is_empty:
@@ -307,6 +311,7 @@ async def play(ctx, *, query: str = None):
     if player is None:
         try:
             player = await voice_channel.connect(cls=wavelink.Player, self_deaf=True)
+            player.autoplay = wavelink.AutoPlayMode.disabled
         except Exception as e:
             embed = discord.Embed(
                 title="❌ เชื่อมต่อ voice channel ไม่ได้",
