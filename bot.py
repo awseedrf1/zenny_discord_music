@@ -168,10 +168,11 @@ async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
         return
 
     reason = getattr(payload, 'reason', 'unknown')
-    print(f'🎵 เพลงจบ (reason: {reason}): {payload.track.title if payload.track else "?"}')
+    reason_str = reason.value if hasattr(reason, 'value') else str(reason)
+    print(f'🎵 เพลงจบ (reason: {reason_str}): {payload.track.title if payload.track else "?"}')
 
     # ถ้าเพลงจบเพราะ replaced หรือ stopped ไม่ต้องเล่นต่อ (มีคนกด skip/stop)
-    if reason in ('replaced', 'stopped'):
+    if reason_str in ('replaced', 'stopped'):
         return
 
     if not player.queue.is_empty:
