@@ -400,6 +400,97 @@ async def play(ctx, *, query: str = None):
             await edit_embed_and_wait(status_msg, embed)
 
 
+class QueueView(discord.ui.View):
+    """Paginated queue viewer with ◀ ▶ buttons."""
+
+    PER_PAGE = 10
+
+    def __init__(self, ctx, player, *, timeout=60):
+        super().__init__(timeout=timeout)
+        self.ctx = ctx
+        self.player = player
+        self.page = 0
+        self._update_buttons()
+
+    def _total_pages(self):
+        return max(1, -(-len(self.player.queue) // self.PER_PAGE))
+
+    def _update_buttons(self):
+        self.prev_btn.disabled = self.page == 0
+        self.next_btn.disabled = self.page >= self._total_pages() - 1
+
+    def build_embed(self):
+        tracks = list(self.player.queue)
+        total_pages = self._total_pages()
+        start = self.page * self.PER_PAGE
+        page_tracks = tracks[start:start + self.PER_PAGE]
+
+        embed = discord.Embed(
+            title="📜 คิวเพลง",
+            color=discord.Color.purple()
+        )
+
+        if self.player.current:
+            current = self.player.current
+            current_text = f"**[{current.title}]({current.uri})**"
+            if current.author:
+                current_text += f"\nโดย: {current.author}"
+            if current.length:
+                current_text += f" • `{format_duration(current.length)}`"
+            embed.add_field(name="🎵 กำลังเล่น", value=current_text[:1024], inline=False)
+            if current.artwork:
+                embed.set_thumbnail(url=current.artwork)
+
+        if page_tracks:
+            queue_text = ""
+            for i, track in enumerate(page_tracks, start + 1):
+                duration_str = f" `{format_duration(track.length)}`" if track.length else ""
+                title = track.title[:60] + "…" if len(track.title) > 60 else track.title
+                line = f"`{i}.` [{title}]({track.uri}){duration_str}\n"
+                if len(queue_text) + len(line) > 1000:
+                    break
+                queue_text += line
+
+            embed.add_field(
+                name=f"📋 ในคิว ({len(tracks)} เพลง)",
+                value=queue_text or "—",
+                inline=False
+            )
+
+        total_duration = sum(t.length for t in tracks if t.length)
+        footer = f"หน้า {self.page + 1}/{total_pages}"
+        if total_duration:
+            footer += f"  •  ⏱️ รวม: {format_duration(total_duration)}"
+        embed.set_footer(text=footer)
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user != self.ctx.author:
+            await interaction.response.send_message("เฉพาะผู้สั่งเท่านั้นที่กดได้", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(emoji="◀", style=discord.ButtonStyle.secondary)
+    async def prev_btn(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        self.page -= 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+    @discord.ui.button(emoji="▶", style=discord.ButtonStyle.secondary)
+    async def next_btn(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        self.page += 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        try:
+            await self.message.edit(view=self)
+        except Exception:
+            pass
+
+
 @bot.command(name='queue', aliases=['q'])
 async def show_queue(ctx):
     """แสดงคิวเพลง"""
@@ -420,44 +511,9 @@ async def show_queue(ctx):
         await send_embed_and_wait(ctx, embed)
         return
 
-    embed = discord.Embed(title="📜 คิวเพลง", color=discord.Color.purple())
-
-    if player.current:
-        current = player.current
-        current_text = f"**[{current.title}]({current.uri})**"
-        if current.author:
-            current_text += f"\nโดย: {current.author}"
-        if current.length:
-            current_text += f" • `{format_duration(current.length)}`"
-        embed.add_field(name="🎵 กำลังเล่น", value=current_text, inline=False)
-        if current.artwork:
-            embed.set_thumbnail(url=current.artwork)
-
-    if not player.queue.is_empty:
-        queue_list = list(player.queue)[:10]
-        queue_text = ""
-        total_duration = 0
-        for i, track in enumerate(queue_list, 1):
-            duration_str = f" `{format_duration(track.length)}`" if track.length else ""
-            queue_text += f"`{i}.` [{track.title}]({track.uri}){duration_str}\n"
-
-        for track in player.queue:
-            if track.length:
-                total_duration += track.length
-
-        if len(player.queue) > 10:
-            queue_text += f"\n*... และอีก `{len(player.queue) - 10}` เพลง*"
-
-        embed.add_field(
-            name=f"📋 ในคิว ({len(player.queue)} เพลง)",
-            value=queue_text,
-            inline=False
-        )
-
-        if total_duration > 0:
-            embed.set_footer(text=f"⏱️ ความยาวคิวรวม: {format_duration(total_duration)}")
-
-    await send_embed_and_wait(ctx, embed)
+    view = QueueView(ctx, player)
+    msg = await ctx.send(embed=view.build_embed(), view=view)
+    view.message = msg
 
 
 @bot.command(name='skip', aliases=['s'])
@@ -485,7 +541,7 @@ async def skip(ctx):
     await send_embed_and_wait(ctx, embed)
 
 
-@bot.command(name='stop')
+@bot.command(name='stop', aliases=['st'])
 async def stop(ctx):
     """หยุดเล่นและเคลียร์คิว"""
     player: wavelink.Player = ctx.voice_client
@@ -537,7 +593,7 @@ async def kick(ctx):
     await send_embed_and_wait(ctx, embed)
 
 
-@bot.command(name='pause')
+@bot.command(name='pause', aliases=['ps'])
 async def pause(ctx):
     """หยุดเพลงชั่วคราว"""
     player: wavelink.Player = ctx.voice_client
@@ -601,7 +657,7 @@ async def resume(ctx):
     await send_embed_and_wait(ctx, embed)
 
 
-@bot.command(name='mute')
+@bot.command(name='mute', aliases=['m'])
 async def mute(ctx):
     """ปิดเสียงบอทใน voice channel"""
     player: wavelink.Player = ctx.voice_client
