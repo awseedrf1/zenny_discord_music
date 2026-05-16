@@ -576,6 +576,88 @@ async def resume(ctx):
     await ctx.send(embed=embed)
 
 
+@bot.command(name='mute')
+async def mute(ctx):
+    """ปิดเสียงบอทใน voice channel"""
+    player: wavelink.Player = ctx.voice_client
+    if player is None or player.channel is None:
+        embed = discord.Embed(
+            description="❌ บอทไม่ได้อยู่ใน voice channel",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed)
+        return
+
+    voice_state = ctx.guild.me.voice if ctx.guild and ctx.guild.me else None
+    if voice_state and voice_state.self_mute:
+        embed = discord.Embed(
+            description="⚠️ บอทถูกปิดเสียงอยู่แล้ว",
+            color=discord.Color.yellow()
+        )
+        await ctx.send(embed=embed)
+        return
+
+    try:
+        await ctx.guild.change_voice_state(channel=player.channel, self_mute=True)
+        embed = discord.Embed(
+            description="🔇 บอทถูกปิดเสียงแล้ว",
+            color=discord.Color.dark_grey()
+        )
+        embed.set_footer(
+            text=f"ขอโดย {ctx.author.display_name}",
+            icon_url=ctx.author.display_avatar.url
+        )
+        await ctx.send(embed=embed)
+    except Exception as e:
+        embed = discord.Embed(
+            title="❌ ไม่สามารถปิดเสียงบอทได้",
+            description=f"```{str(e)[:200]}```",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed)
+
+
+@bot.command(name='unmute', aliases=['um'])
+async def unmute(ctx):
+    """เปิดเสียงบอทใน voice channel"""
+    player: wavelink.Player = ctx.voice_client
+    if player is None or player.channel is None:
+        embed = discord.Embed(
+            description="❌ บอทไม่ได้อยู่ใน voice channel",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed)
+        return
+
+    voice_state = ctx.guild.me.voice if ctx.guild and ctx.guild.me else None
+    if voice_state and not voice_state.self_mute:
+        embed = discord.Embed(
+            description="⚠️ บอทยังไม่ถูกปิดเสียง",
+            color=discord.Color.yellow()
+        )
+        await ctx.send(embed=embed)
+        return
+
+    try:
+        await ctx.guild.change_voice_state(channel=player.channel, self_mute=False)
+        embed = discord.Embed(
+            description="🔊 บอทเปิดเสียงแล้ว",
+            color=discord.Color.green()
+        )
+        embed.set_footer(
+            text=f"ขอโดย {ctx.author.display_name}",
+            icon_url=ctx.author.display_avatar.url
+        )
+        await ctx.send(embed=embed)
+    except Exception as e:
+        embed = discord.Embed(
+            title="❌ ไม่สามารถเปิดเสียงบอทได้",
+            description=f"```{str(e)[:200]}```",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed)
+
+
 @bot.command(name='help', aliases=['h', 'commands'])
 async def help_command(ctx):
     """แสดงรายการคำสั่ง"""
@@ -590,6 +672,8 @@ async def help_command(ctx):
     embed.add_field(name="⏹️ `!stop`", value="หยุดและเคลียร์คิว", inline=True)
     embed.add_field(name="⏸️ `!pause`", value="หยุดชั่วคราว", inline=True)
     embed.add_field(name="▶️ `!resume`", value="เล่นต่อ", inline=True)
+    embed.add_field(name="🔇 `!mute`", value="ปิดเสียงบอทใน voice", inline=True)
+    embed.add_field(name="🔊 `!unmute`", value="เปิดเสียงบอทใน voice", inline=True)
     embed.add_field(name="👋 `!kick`", value="เตะบอทออก", inline=True)
     embed.set_footer(text="ใช้ ! นำหน้าทุกคำสั่ง")
     await ctx.send(embed=embed)
