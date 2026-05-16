@@ -171,8 +171,8 @@ async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
     reason_str = reason.value if hasattr(reason, 'value') else str(reason)
     print(f'🎵 เพลงจบ (reason: {reason_str}): {payload.track.title if payload.track else "?"}')
 
-    # ถ้าเพลงจบเพราะ replaced หรือ stopped ไม่ต้องเล่นต่อ (มีคนกด skip/stop)
-    if reason_str.lower() in ('replaced', 'stopped', 'finished_dc'):
+    # replaced = skip/play กำลังจัดการอยู่, cleanup = node ตัดการเชื่อมต่อ
+    if reason_str.lower() in ('replaced', 'cleanup'):
         return
 
     # ป้องกัน duplicate: ถ้า player กำลังเล่นอยู่แล้วให้หยุด
@@ -191,8 +191,11 @@ async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
             except Exception as e:
                 print(f'Error sending now-playing message: {e}')
     else:
-        # คิวว่าง → เริ่มนับเวลา idle (auto-disconnect ใน 5 นาที)
-        bot.loop.create_task(idle_disconnect(player))
+        # คิวว่าง → ยกเลิก task เดิม (ถ้ามี) แล้วเริ่มนับ idle ใหม่
+        old_task = getattr(player, '_idle_task', None)
+        if old_task and not old_task.done():
+            old_task.cancel()
+        player._idle_task = bot.loop.create_task(idle_disconnect(player))
 
 
 @bot.event
@@ -208,27 +211,17 @@ async def on_wavelink_track_exception(payload: wavelink.TrackExceptionEventPaylo
     channel = getattr(player, 'home_channel', None)
     if channel:
         try:
+            footer = "กำลังข้ามไปเพลงถัดไป..." if not player.queue.is_empty else "คิวว่างเปล่า"
             embed = discord.Embed(
                 title="⚠️ เล่นเพลงไม่ได้",
                 description=f"**{track.title if track else 'เพลง'}**\n```{err_msg[:200]}```",
                 color=discord.Color.orange()
             )
-            if not player.queue.is_empty:
-                embed.set_footer(text="กำลังข้ามไปเพลงถัดไป...")
+            embed.set_footer(text=footer)
             await channel.send(embed=embed)
         except Exception:
             pass
-
-    # ลองเล่นเพลงถัดไป
-    if player and not player.queue.is_empty:
-        next_track = player.queue.get()
-        try:
-            await player.play(next_track)
-            if channel:
-                embed = build_now_playing_embed(next_track, queue_size=len(player.queue))
-                await channel.send(embed=embed)
-        except Exception as e:
-            print(f'Failed to play next track: {e}')
+    # on_wavelink_track_end จะจัดการเล่นเพลงถัดไปเมื่อ Lavalink ส่ง loadFailed
 
 
 @bot.event
@@ -248,13 +241,7 @@ async def on_wavelink_track_stuck(payload: wavelink.TrackStuckEventPayload):
             await channel.send(embed=embed)
         except Exception:
             pass
-
-    if player and not player.queue.is_empty:
-        next_track = player.queue.get()
-        try:
-            await player.play(next_track)
-        except Exception:
-            pass
+    # on_wavelink_track_end จะจัดการเล่นเพลงถัดไปเมื่อ Lavalink ส่ง stopped
 
 
 async def idle_disconnect(player: wavelink.Player, timeout: int = 300):
@@ -311,7 +298,6 @@ async def play(ctx, *, query: str = None):
     if player is None:
         try:
             player = await voice_channel.connect(cls=wavelink.Player, self_deaf=True)
-            player.autoplay = wavelink.AutoPlayMode.disabled
         except Exception as e:
             embed = discord.Embed(
                 title="❌ เชื่อมต่อ voice channel ไม่ได้",
@@ -323,8 +309,13 @@ async def play(ctx, *, query: str = None):
     elif player.channel != voice_channel:
         await player.move_to(voice_channel)
 
-    # ผูก channel ไว้กับ player เพื่อใช้ส่งข้อความ
+    player.autoplay = wavelink.AutoPlayMode.disabled
     player.home_channel = ctx.channel
+
+    # ยกเลิก idle timer ถ้ามีอยู่ (ป้องกันบอทถูกเตะขณะกำลังเล่น)
+    old_task = getattr(player, '_idle_task', None)
+    if old_task and not old_task.done():
+        old_task.cancel()
 
     # ค้นหาเพลง
     try:
@@ -469,21 +460,15 @@ class QueueView(discord.ui.View):
         embed.set_footer(text=footer)
         return embed
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user != self.ctx.author:
-            await interaction.response.send_message("เฉพาะผู้สั่งเท่านั้นที่กดได้", ephemeral=True)
-            return False
-        return True
-
     @discord.ui.button(emoji="◀", style=discord.ButtonStyle.secondary)
     async def prev_btn(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        self.page -= 1
+        self.page = max(0, self.page - 1)
         self._update_buttons()
         await interaction.response.edit_message(embed=self.build_embed(), view=self)
 
     @discord.ui.button(emoji="▶", style=discord.ButtonStyle.secondary)
     async def next_btn(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        self.page += 1
+        self.page = min(self._total_pages() - 1, self.page + 1)
         self._update_buttons()
         await interaction.response.edit_message(embed=self.build_embed(), view=self)
 
@@ -491,7 +476,9 @@ class QueueView(discord.ui.View):
         for item in self.children:
             item.disabled = True
         try:
-            await self.message.edit(view=self)
+            msg = getattr(self, 'message', None)
+            if msg:
+                await msg.edit(view=self)
         except Exception:
             pass
 
@@ -534,11 +521,22 @@ async def skip(ctx):
         return
 
     current_title = player.current.title if player.current else "เพลง"
-    await player.skip(force=True)
-    embed = discord.Embed(
-        description=f"⏭️ ข้าม **{current_title}**",
-        color=discord.Color.orange()
-    )
+
+    if not player.queue.is_empty:
+        next_track = player.queue.get()
+        await player.play(next_track)  # fires 'replaced' → track_end ignores it
+        embed = discord.Embed(
+            title="⏭️ ข้ามเพลง",
+            description=f"ข้าม **{current_title}**\n\n▶️ กำลังเล่น: **[{next_track.title}]({next_track.uri})**",
+            color=discord.Color.orange()
+        )
+    else:
+        await player.stop()  # queue ว่าง → หยุดเล่น, track_end จะ idle_disconnect
+        embed = discord.Embed(
+            description=f"⏭️ ข้าม **{current_title}** — คิวว่างเปล่าแล้ว",
+            color=discord.Color.orange()
+        )
+
     embed.set_footer(
         text=f"ขอโดย {ctx.author.display_name}",
         icon_url=ctx.author.display_avatar.url
@@ -752,16 +750,16 @@ async def help_command(ctx):
         description="คำสั่งทั้งหมดของบอท",
         color=discord.Color.gold()
     )
-    embed.add_field(name="🎶 `!play [เพลง/Link]`", value="เล่นเพลงจาก YouTube/SoundCloud", inline=False)
-    embed.add_field(name="📜 `!queue`", value="ดูคิวเพลง", inline=True)
-    embed.add_field(name="⏭️ `!skip`", value="ข้ามเพลง", inline=True)
-    embed.add_field(name="⏹️ `!stop`", value="หยุดและเคลียร์คิว", inline=True)
-    embed.add_field(name="⏸️ `!pause`", value="หยุดชั่วคราว", inline=True)
-    embed.add_field(name="▶️ `!resume`", value="เล่นต่อ", inline=True)
-    embed.add_field(name="🔇 `!mute`", value="ปิดเสียงบอทใน voice", inline=True)
-    embed.add_field(name="🔊 `!unmute`", value="เปิดเสียงบอทใน voice", inline=True)
-    embed.add_field(name="👋 `!kick`", value="เตะบอทออก", inline=True)
-    embed.set_footer(text="ใช้ ! นำหน้าทุกคำสั่ง")
+    embed.add_field(name="🎶 `!play` / `!p`", value="เล่นเพลงจาก YouTube/SoundCloud", inline=False)
+    embed.add_field(name="📜 `!queue` / `!q`", value="ดูคิวเพลง (มีปุ่มพลิกหน้า)", inline=True)
+    embed.add_field(name="⏭️ `!skip` / `!s`", value="ข้ามเพลง", inline=True)
+    embed.add_field(name="⏹️ `!stop` / `!st`", value="หยุดและเคลียร์คิว", inline=True)
+    embed.add_field(name="⏸️ `!pause` / `!ps`", value="หยุดชั่วคราว", inline=True)
+    embed.add_field(name="▶️ `!resume` / `!r`", value="เล่นต่อ", inline=True)
+    embed.add_field(name="🔇 `!mute` / `!m`", value="ปิดเสียงบอทใน voice", inline=True)
+    embed.add_field(name="🔊 `!unmute` / `!um`", value="เปิดเสียงบอทใน voice", inline=True)
+    embed.add_field(name="👋 `!kick` / `!dc`", value="เตะบอทออก", inline=True)
+    embed.set_footer(text="ใช้ ! นำหน้าทุกคำสั่ง • ตัวย่ออยู่หลัง /")
     await send_embed_and_wait(ctx, embed)
 
 
