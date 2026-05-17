@@ -127,8 +127,8 @@ async def connect_voice(ctx, channel: discord.VoiceChannel = None):
     try:
         player = await channel.connect(cls=wavelink.Player, self_deaf=True)
         return player
-    except Exception:
-        return None
+    except Exception as e:
+        raise RuntimeError(f"voice connect failed: {e}") from e
 
 
 async def queue_track(player: wavelink.Player, status_channel: discord.TextChannel, query: str, requester=None):
@@ -232,10 +232,20 @@ async def http_play_command(guild_id: int, text_channel_id: int, voice_channel_i
         return {"error": "guild not found"}, 404
 
     text_channel = bot.get_channel(text_channel_id)
+    if text_channel is None:
+        try:
+            text_channel = await bot.fetch_channel(text_channel_id)
+        except Exception:
+            text_channel = None
     if text_channel is None or not isinstance(text_channel, discord.abc.Messageable):
         return {"error": "text channel not found"}, 404
 
     voice_channel = bot.get_channel(voice_channel_id)
+    if voice_channel is None:
+        try:
+            voice_channel = await bot.fetch_channel(voice_channel_id)
+        except Exception:
+            voice_channel = None
     if voice_channel is None or not isinstance(voice_channel, discord.VoiceChannel):
         return {"error": "voice channel not found"}, 404
 
@@ -483,10 +493,17 @@ async def play(ctx, *, query: str = None):
         await send_embed_and_wait(ctx, embed)
         return
 
+    if query is None or query.strip() == "":
+        embed = discord.Embed(
+            title="❌ ใช้คำสั่งไม่ถูกต้อง",
+            description="กรุณาระบุชื่อเพลงหรือลิงก์\nตัวอย่าง: `!play despacito`",
+            color=discord.Color.red()
+        )
+        await send_embed_and_wait(ctx, embed)
+        return
+
     # ถ้าบอทยังไม่อยู่ใน voice ให้เข้าห้องของผู้ใช้งานก่อน
-    voice_channel = None
-    if ctx.author.voice is not None:
-        voice_channel = ctx.author.voice.channel
+    voice_channel = ctx.author.voice.channel if ctx.author.voice is not None else None
 
     player: wavelink.Player = ctx.voice_client
     if player is None:
@@ -498,11 +515,12 @@ async def play(ctx, *, query: str = None):
             await send_embed_and_wait(ctx, embed)
             return
 
-        player = await connect_voice(ctx, voice_channel)
-        if player is None:
+        try:
+            player = await connect_voice(ctx, voice_channel)
+        except Exception as e:
             embed = discord.Embed(
                 title="❌ เชื่อมต่อ voice channel ไม่ได้",
-                description="บอทไม่สามารถเข้าห้องเสียงได้",
+                description=f"บอทไม่สามารถเข้าห้องเสียงได้\n```{str(e)[:240]}```",
                 color=discord.Color.red()
             )
             await send_embed_and_wait(ctx, embed)
@@ -988,7 +1006,7 @@ async def help_command(ctx):
         description="คำสั่งทั้งหมดของบอท",
         color=discord.Color.gold()
     )
-    embed.add_field(name="🎶 `!play` / `!p`", value="เล่นเพลงจาก YouTube/SoundCloud หรือ URL แล้วบอทจะเข้าห้องให้ถ้าผู้ใช้อยู่ใน voice", inline=False)
+    embed.add_field(name="🎶 `!play` / `!p`", value="เล่นเพลงจาก YouTube/SoundCloud หรือ URL แล้วบอทจะเข้าห้องเสียงของคนสั่ง ถ้าใช้ใน Discord", inline=False)
     embed.add_field(name="▶️ `!join` / `!j`", value="สั่งบอทเข้าห้องเสียง (ถ้าไม่ได้อยู่ voice)", inline=False)
     embed.add_field(name="📜 `!queue` / `!q`", value="ดูคิวเพลง (มีปุ่มพลิกหน้า)", inline=True)
     embed.add_field(name="⏭️ `!skip` / `!s`", value="ข้ามเพลง", inline=True)
