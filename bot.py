@@ -246,7 +246,10 @@ async def http_play_command(guild_id: int, text_channel_id: int, voice_channel_i
         except Exception as e:
             return {"error": f"connect failed: {e}"}, 500
     elif player.channel != voice_channel:
-        await player.move_to(voice_channel)
+        try:
+            await player.move_to(voice_channel)
+        except Exception as e:
+            return {"error": f"move_to failed: {e}"}, 500
 
     result = await queue_track(player, text_channel, query)
     if result is None:
@@ -505,7 +508,16 @@ async def play(ctx, *, query: str = None):
             await send_embed_and_wait(ctx, embed)
             return
     elif voice_channel is not None and player.channel != voice_channel:
-        await player.move_to(voice_channel)
+        try:
+            await player.move_to(voice_channel)
+        except Exception:
+            embed = discord.Embed(
+                title="❌ เชื่อมต่อ voice channel ไม่ได้",
+                description="บอทไม่สามารถย้ายเข้า voice channel ที่ระบุได้",
+                color=discord.Color.red()
+            )
+            await send_embed_and_wait(ctx, embed)
+            return
 
     # ส่ง embed ค้นหาก่อน แล้วค่อย edit
     searching_embed = discord.Embed(
@@ -803,7 +815,10 @@ async def join(ctx, *, channel: discord.VoiceChannel = None):
 
     try:
         if player is not None:
-            await player.move_to(channel)
+            try:
+                await player.move_to(channel)
+            except Exception as e:
+                raise
         else:
             await channel.connect(cls=wavelink.Player, self_deaf=True)
         embed = discord.Embed(
