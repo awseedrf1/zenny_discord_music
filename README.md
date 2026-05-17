@@ -43,7 +43,7 @@ Discord music bot ที่ใช้ **Lavalink** แก้ปัญหา YouTu
 ตัวอย่าง:
 
 ```
-https://zenny-discord-music.onrender.com/command?action=!p&guild_id=123456789012345678&text_channel_id=234567890123456789&voice_channel_id=345678901234567890&query=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dabcd1234
+https://your-site.com/command?action=!p&guild_id=123456789012345678&text_channel_id=234567890123456789&voice_channel_id=345678901234567890&query=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dabcd1234
 ```
 
 ### วิธีหา ID ใน Discord
