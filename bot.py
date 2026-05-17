@@ -111,6 +111,24 @@ async def edit_embed_and_wait(message, embed):
     return msg
 
 
+async def connect_voice(ctx, channel: discord.VoiceChannel = None):
+    """เชื่อมต่อบอทเข้า voice channel ถ้ายังไม่ได้อยู่"""
+    player: wavelink.Player = ctx.voice_client
+    if player is not None and player.channel is not None:
+        return player
+
+    if channel is None:
+        if ctx.author.voice is None:
+            return None
+        channel = ctx.author.voice.channel
+
+    try:
+        player = await channel.connect(cls=wavelink.Player, self_deaf=True)
+        return player
+    except Exception:
+        return None
+
+
 async def connect_lavalink():
     """เชื่อมต่อกับ Lavalink server"""
     scheme = 'https' if LAVALINK_SECURE else 'http'
@@ -303,15 +321,32 @@ async def play(ctx, *, query: str = None):
         await send_embed_and_wait(ctx, embed)
         return
 
-    if ctx.author.voice is None:
-        embed = discord.Embed(
-            description="❌ คุณต้องเข้า voice channel ก่อน",
-            color=discord.Color.red()
-        )
-        await send_embed_and_wait(ctx, embed)
-        return
+    # ถ้าบอทยังไม่อยู่ใน voice ให้เข้าห้องของผู้ใช้งานก่อน
+    voice_channel = None
+    if ctx.author.voice is not None:
+        voice_channel = ctx.author.voice.channel
 
-    voice_channel = ctx.author.voice.channel
+    player: wavelink.Player = ctx.voice_client
+    if player is None:
+        if voice_channel is None:
+            embed = discord.Embed(
+                description="❌ คุณต้องเข้า voice channel หรือให้บอทอยู่ใน voice ก่อน",
+                color=discord.Color.red()
+            )
+            await send_embed_and_wait(ctx, embed)
+            return
+
+        player = await connect_voice(ctx, voice_channel)
+        if player is None:
+            embed = discord.Embed(
+                title="❌ เชื่อมต่อ voice channel ไม่ได้",
+                description="บอทไม่สามารถเข้าห้องเสียงได้",
+                color=discord.Color.red()
+            )
+            await send_embed_and_wait(ctx, embed)
+            return
+    elif voice_channel is not None and player.channel != voice_channel:
+        await player.move_to(voice_channel)
 
     # ส่ง embed ค้นหาก่อน แล้วค่อย edit
     searching_embed = discord.Embed(
@@ -319,22 +354,6 @@ async def play(ctx, *, query: str = None):
         color=discord.Color.light_grey()
     )
     status_msg = await ctx.send(embed=searching_embed)
-
-    # เชื่อมต่อ voice channel
-    player: wavelink.Player = ctx.voice_client
-    if player is None:
-        try:
-            player = await voice_channel.connect(cls=wavelink.Player, self_deaf=True)
-        except Exception as e:
-            embed = discord.Embed(
-                title="❌ เชื่อมต่อ voice channel ไม่ได้",
-                description=f"```{str(e)[:200]}```",
-                color=discord.Color.red()
-            )
-            await edit_embed_and_wait(status_msg, embed)
-            return
-    elif player.channel != voice_channel:
-        await player.move_to(voice_channel)
 
     player.autoplay = wavelink.AutoPlayMode.disabled
     player.home_channel = ctx.channel
@@ -601,33 +620,48 @@ async def stop(ctx):
     await send_embed_and_wait(ctx, embed)
 
 
-@bot.command(name='kick', aliases=['leave', 'disconnect', 'dc'])
-async def kick(ctx):
-    """เตะบอทออกจาก voice channel"""
+@bot.command(name='join', aliases=['j'])
+async def join(ctx, *, channel: discord.VoiceChannel = None):
+    """สั่งบอทเข้าห้อง voice channel"""
+    if channel is None:
+        if ctx.author.voice is None:
+            embed = discord.Embed(
+                description="❌ คุณต้องอยู่ใน voice channel หรือระบุชื่อห้องเสียง",
+                color=discord.Color.red()
+            )
+            await send_embed_and_wait(ctx, embed)
+            return
+        channel = ctx.author.voice.channel
+
     player: wavelink.Player = ctx.voice_client
-    if player is None:
+    if player is not None and player.channel == channel:
         embed = discord.Embed(
-            description="❌ บอทไม่ได้อยู่ใน voice channel",
-            color=discord.Color.red()
+            description=f"✅ บอทอยู่ในห้องเสียง `{channel.name}` แล้ว",
+            color=discord.Color.green()
         )
         await send_embed_and_wait(ctx, embed)
         return
 
-    player.queue.clear()
-    await player.disconnect()
-    embed = discord.Embed(
-        description="👋 บอทออกจาก voice channel แล้ว",
-        color=discord.Color.greyple()
-    )
-    embed.set_footer(
-        text=f"ขอโดย {ctx.author.display_name}",
-        icon_url=ctx.author.display_avatar.url
-    )
+    try:
+        if player is not None:
+            await player.move_to(channel)
+        else:
+            await channel.connect(cls=wavelink.Player, self_deaf=True)
+        embed = discord.Embed(
+            description=f"✅ เข้าห้องเสียง `{channel.name}` แล้ว",
+            color=discord.Color.green()
+        )
+    except Exception as e:
+        embed = discord.Embed(
+            title="❌ เข้าห้องเสียงไม่ได้",
+            description=f"```{str(e)[:200]}```",
+            color=discord.Color.red()
+        )
     await send_embed_and_wait(ctx, embed)
 
 
-@bot.command(name='pause', aliases=['ps'])
-async def pause(ctx):
+@bot.command(name='kick', aliases=['leave', 'disconnect', 'dc'])
+async def kick(ctx):
     """หยุดเพลงชั่วคราว"""
     player: wavelink.Player = ctx.voice_client
     if player is None or not player.playing:
@@ -780,7 +814,8 @@ async def help_command(ctx):
         description="คำสั่งทั้งหมดของบอท",
         color=discord.Color.gold()
     )
-    embed.add_field(name="🎶 `!play` / `!p`", value="เล่นเพลงจาก YouTube/SoundCloud", inline=False)
+    embed.add_field(name="🎶 `!play` / `!p`", value="เล่นเพลงจาก YouTube/SoundCloud หรือ URL แล้วบอทจะเข้าห้องให้ถ้าผู้ใช้อยู่ใน voice", inline=False)
+    embed.add_field(name="▶️ `!join` / `!j`", value="สั่งบอทเข้าห้องเสียง (ถ้าไม่ได้อยู่ voice)", inline=False)
     embed.add_field(name="📜 `!queue` / `!q`", value="ดูคิวเพลง (มีปุ่มพลิกหน้า)", inline=True)
     embed.add_field(name="⏭️ `!skip` / `!s`", value="ข้ามเพลง", inline=True)
     embed.add_field(name="⏹️ `!stop` / `!st`", value="หยุดและเคลียร์คิว", inline=True)
