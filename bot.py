@@ -4,7 +4,9 @@ import wavelink
 import asyncio
 import os
 from dotenv import load_dotenv
-from keep_alive import keep_alive
+from flask import request
+from keep_alive import app, keep_alive
+import concurrent.futures
 
 load_dotenv()
 
@@ -127,6 +129,163 @@ async def connect_voice(ctx, channel: discord.VoiceChannel = None):
         return player
     except Exception:
         return None
+
+
+async def queue_track(player: wavelink.Player, status_channel: discord.TextChannel, query: str, requester=None):
+    """ค้นหาเพลง, เพิ่มคิว, แล้วเล่นถ้าไม่มีเพลงกำลังเล่น"""
+    searching_embed = discord.Embed(
+        description=f"🔍 กำลังค้นหา: `{query}`",
+        color=discord.Color.light_grey()
+    )
+    status_msg = await status_channel.send(embed=searching_embed)
+
+    player.autoplay = wavelink.AutoPlayMode.disabled
+    player.home_channel = status_channel
+    if not player.playing:
+        player._pending_status_msg = status_msg
+        player._pending_status_requester = requester
+
+    old_task = getattr(player, '_idle_task', None)
+    if old_task and not old_task.done():
+        old_task.cancel()
+
+    try:
+        tracks: wavelink.Search = await wavelink.Playable.search(query)
+    except Exception as e:
+        embed = discord.Embed(
+            title="❌ ค้นหาไม่สำเร็จ",
+            description=f"```{str(e)[:300]}```",
+            color=discord.Color.red()
+        )
+        await status_msg.edit(embed=embed)
+        return None
+
+    if not tracks:
+        embed = discord.Embed(
+            description="❌ ไม่พบเพลงที่ค้นหา",
+            color=discord.Color.red()
+        )
+        await status_msg.edit(embed=embed)
+        return None
+
+    if isinstance(tracks, wavelink.Playlist):
+        added = await player.queue.put_wait(tracks)
+        if not player.playing:
+            next_track = player.queue.get()
+            await player.play(next_track)
+            embed = build_now_playing_embed(
+                next_track,
+                requester,
+                queue_size=len(player.queue),
+                playlist_info=f"เพิ่ม `{added}` เพลงจาก playlist **{tracks.name}**"
+            )
+        else:
+            embed = discord.Embed(
+                title="➕ เพิ่ม Playlist ในคิว",
+                description=f"**{tracks.name}**\nจำนวน: `{added}` เพลง\nคิวรวม: `{len(player.queue)}` เพลง",
+                color=discord.Color.blue()
+            )
+            embed.set_footer(
+                text=f"ขอโดย {requester.display_name if requester else 'ระบบ'}",
+                icon_url=requester.display_avatar.url if requester else None
+            )
+        await status_msg.edit(embed=embed)
+        return True
+
+    track = tracks[0]
+    await player.queue.put_wait(track)
+
+    if player.playing:
+        embed = discord.Embed(
+            title="➕ เพิ่มเพลงในคิว",
+            description=f"**[{track.title}]({track.uri})**",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="ลำดับในคิว", value=f"`#{len(player.queue)}`", inline=True)
+        if track.length:
+            embed.add_field(name="ความยาว", value=format_duration(track.length), inline=True)
+        if track.author:
+            embed.add_field(name="ศิลปิน", value=track.author, inline=True)
+        if track.artwork:
+            embed.set_thumbnail(url=track.artwork)
+        embed.set_footer(
+            text=f"ขอโดย {requester.display_name if requester else 'ระบบ'}",
+            icon_url=requester.display_avatar.url if requester else None
+        )
+        await status_msg.edit(embed=embed)
+        return True
+
+    next_track = player.queue.get()
+    await player.play(next_track)
+    embed = build_now_playing_embed(
+        next_track,
+        requester,
+        queue_size=len(player.queue)
+    )
+    await status_msg.edit(embed=embed)
+    return True
+
+
+async def http_play_command(guild_id: int, text_channel_id: int, voice_channel_id: int, query: str):
+    guild = bot.get_guild(guild_id)
+    if guild is None:
+        return {"error": "guild not found"}, 404
+
+    text_channel = bot.get_channel(text_channel_id)
+    if text_channel is None or not isinstance(text_channel, discord.abc.Messageable):
+        return {"error": "text channel not found"}, 404
+
+    voice_channel = bot.get_channel(voice_channel_id)
+    if voice_channel is None or not isinstance(voice_channel, discord.VoiceChannel):
+        return {"error": "voice channel not found"}, 404
+
+    player = guild.voice_client
+    if player is None:
+        try:
+            player = await voice_channel.connect(cls=wavelink.Player, self_deaf=True)
+        except Exception as e:
+            return {"error": f"connect failed: {e}"}, 500
+    elif player.channel != voice_channel:
+        await player.move_to(voice_channel)
+
+    result = await queue_track(player, text_channel, query)
+    if result is None:
+        return {"error": "failed to enqueue or play track"}, 500
+
+    return {"status": "ok", "message": "เพลงถูกเพิ่ม/เล่นแล้ว"}, 200
+
+
+@app.route('/command')
+def http_command():
+    action = request.args.get('action') or request.args.get('cmd')
+    query = request.args.get('query')
+    guild_id = request.args.get('guild_id')
+    text_channel_id = request.args.get('text_channel_id')
+    voice_channel_id = request.args.get('voice_channel_id')
+
+    if not action or not guild_id or not text_channel_id or not query:
+        return {"error": "action, guild_id, text_channel_id, query are required"}, 400
+
+    action = action.lstrip('!').lower()
+    if action not in ('play', 'p'):
+        return {"error": "unsupported action"}, 400
+
+    try:
+        guild_id = int(guild_id)
+        text_channel_id = int(text_channel_id)
+        voice_channel_id = int(voice_channel_id)
+    except (TypeError, ValueError):
+        return {"error": "guild_id, text_channel_id, voice_channel_id must be integers"}, 400
+
+    future = asyncio.run_coroutine_threadsafe(
+        http_play_command(guild_id, text_channel_id, voice_channel_id, query),
+        bot.loop
+    )
+    try:
+        result, status = future.result(timeout=30)
+        return result, status
+    except concurrent.futures.TimeoutError:
+        return {"error": "request timed out"}, 504
 
 
 async def connect_lavalink():
