@@ -24,6 +24,38 @@ Discord music bot ที่ใช้ **Lavalink** แก้ปัญหา YouTu
 
 ---
 
+## 🌐 เรียกผ่าน Render HTTP
+บอทรองรับการสั่ง `!play` ผ่าน URL endpoint ได้ที่ `/command` โดยต้องส่งพารามิเตอร์ดังนี้:
+
+- `action` หรือ `cmd` = `!p` / `!play`
+- `guild_id` = ID ของ server
+- `text_channel_id` = ID ของช่องข้อความที่จะให้บอทส่งผล
+- `voice_channel_id` = ID ของห้องเสียงที่จะให้บอทเข้า
+- `query` = ลิงก์เพลงหรือคำค้น
+
+นอกจากนี้ยังมีหน้า UI ให้ใช้งานได้ที่:
+
+- `/action=ui`
+- `/ui`
+
+โดยจะเป็นฟอร์มที่กรอก ID และ URL เพลงได้เลย แล้วส่งคำสั่งให้บอทผ่าน `/command` อัตโนมัติ
+
+ตัวอย่าง:
+
+```
+https://zenny-discord-music.onrender.com/command?action=!p&guild_id=123456789012345678&text_channel_id=234567890123456789&voice_channel_id=345678901234567890&query=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dabcd1234
+```
+
+### วิธีหา ID ใน Discord
+1. เปิด `User Settings` → `Advanced` → เปิด `Developer Mode`
+2. คลิกขวาที่เซิร์ฟเวอร์ → `Copy ID`
+3. คลิกขวาที่ช่องข้อความ → `Copy ID`
+4. คลิกขวาที่ห้องเสียง → `Copy ID`
+
+> หมายเหตุ: ถ้าเรียกจาก Discord ปกติไม่ต้องระบุ `guild_id`/`text_channel_id`/`voice_channel_id` แต่ถ้าเรียกผ่าน HTTP URL ต้องใส่ครบทั้ง 3 ค่า
+
+---
+
 ## 🚀 ขั้นตอน Deploy บน Render.com
 
 ### ขั้นที่ 1: สร้าง Discord Bot (ถ้ายังไม่มี)
